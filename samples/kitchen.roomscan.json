@@ -1,0 +1,54 @@
+{
+  "schema": "mozu.roomscan/1",
+  "polygon": [
+    {
+      "x": 0,
+      "z": 0
+    },
+    {
+      "x": 4000,
+      "z": 0
+    },
+    {
+      "x": 4000,
+      "z": 3000
+    },
+    {
+      "x": 0,
+      "z": 3000
+    }
+  ],
+  "height": 2500,
+  "openings": [
+    {
+      "wall": 0,
+      "type": "door",
+      "offset": 800,
+      "width": 900,
+      "height": 2050
+    }
+  ],
+  "objects": [],
+  "fixtures": [
+    {
+      "type": "socket",
+      "wall": 0,
+      "offset": 900,
+      "height": 1100,
+      "source": "detected",
+      "confidence": 0.9
+    },
+    {
+      "type": "socket",
+      "wall": 1,
+      "offset": 1500,
+      "height": 300,
+      "source": "detected",
+      "confidence": 0.8
+    }
+  ],
+  "source": "roomplan",
+  "unitSystem": "metric",
+  "confidence": 0.9,
+  "capturedAt": "2026-01-01T00:00:00Z"
+}
