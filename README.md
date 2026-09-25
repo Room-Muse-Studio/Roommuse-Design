@@ -11,6 +11,7 @@ phone app ──scan──▶ MOZU web (Vercel) ──6-character code──▶ 
 | Folder / file | What it is |
 |---|---|
 | `apps/ios/` | The scanning app (Swift, RoomPlan + LiDAR, socket detection) |
+| `apps/ios/MozuScannerClip/`, `apps/web/clip/`, `apps/web/.well-known/` | The App Clip: the scanner launched from a link or QR code with nothing to install. Built, not yet publishable (see `apps/ios/README.md` → App Clip) |
 | `apps/web/index.html` | The prototype, one packed file. The only addition is the scan import section at the very end. |
 | `apps/web/scan-import.js` | Turns a room scan into the prototype's room format, and draws doors/sockets in 3D |
 | `packages/scan-sdk/` | The shared `mozu.roomscan/1` format and floorplan engine |
@@ -107,6 +108,15 @@ plug in and press ⌘R again to refresh it.
 Codes last 24 hours. If a code has expired, tap **Send to MOZU web** again; you don't need to rescan.
 
 ---
+
+## App Clip (scan without installing an app)
+
+The scanner also builds as an **App Clip**: a person scans a QR code or opens
+`https://roommuse-design.vercel.app/clip` on their iPhone, taps **Open**, and
+MOZU Scan runs without an App Store download. The code, the Xcode target and the
+website files are in place; shipping it needs the paid Apple Developer Program,
+a final domain and App Store review. The steps are in
+[`apps/ios/README.md`](apps/ios/README.md#app-clip).
 
 ## Local development
 
