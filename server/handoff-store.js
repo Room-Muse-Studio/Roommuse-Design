@@ -4,8 +4,11 @@
  * Matches mozu-configurator/src/systems/handoff/scanHandoff.ts: six characters
  * from an unambiguous alphabet, valid for 24 hours, forgiving of how people type.
  *
- * In-memory on purpose: codes live as long as the server process. Restarting
- * the server forgets them, which is fine for a prototype and wrong for two servers.
+ * Two stores share one async interface:
+ *   MemoryHandoffStore — `npm start` on a laptop; codes live as long as the process.
+ *   RedisHandoffStore  — production (Vercel + Upstash Redis). Every server
+ *                        instance sees the same codes, and they survive redeploys.
+ * createStore() picks one from the environment.
  */
 'use strict';
 
@@ -16,6 +19,8 @@ const ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CODE_LENGTH = 6;
 const HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SCAN_BYTES = 2_000_000;
+const KEY_PREFIX = 'mozu:handoff:';
+const RATE_PREFIX = 'mozu:rate:';
 
 function newCode() {
   const bytes = crypto.randomBytes(CODE_LENGTH);
@@ -40,32 +45,56 @@ function normaliseCode(input) {
   return cleaned;
 }
 
+// ── stores ─────────────────────────────────────────────────────────────────
+//
+// Interface (all async):
+//   claim(code, entry, ttlMs) → true if stored, false if the code was taken
+//   get(code)                 → entry or null (expired entries are null)
+//   hit(bucket, windowMs)     → how many times `bucket` was hit in this window
+//   ping()                    → true when the store is reachable
+
 class MemoryHandoffStore {
-  constructor() {
+  constructor({ now = () => Date.now() } = {}) {
+    this.kind = 'memory';
+    this.now = now;
     this.entries = new Map();
+    this.counters = new Map();
   }
 
-  put(code, entry) {
+  async claim(code, entry) {
     this.sweep();
+    if (this.entries.has(code)) return false;
     this.entries.set(code, entry);
+    return true;
   }
 
-  get(code) {
+  async get(code) {
     const found = this.entries.get(code);
     if (!found) return null;
-    if (found.expiresAt <= Date.now()) {
+    if (found.expiresAt <= this.now()) {
       this.entries.delete(code);
       return null;
     }
     return found;
   }
 
-  delete(code) {
-    this.entries.delete(code);
+  async hit(bucket, windowMs) {
+    const now = this.now();
+    const c = this.counters.get(bucket);
+    if (!c || c.resetAt <= now) {
+      this.counters.set(bucket, { count: 1, resetAt: now + windowMs });
+      return 1;
+    }
+    return ++c.count;
   }
 
-  sweep(now = Date.now()) {
+  async ping() {
+    return true;
+  }
+
+  sweep(now = this.now()) {
     for (const [code, entry] of this.entries) if (entry.expiresAt <= now) this.entries.delete(code);
+    for (const [bucket, c] of this.counters) if (c.resetAt <= now) this.counters.delete(bucket);
   }
 
   get size() {
@@ -73,23 +102,99 @@ class MemoryHandoffStore {
   }
 }
 
+/** Upstash Redis over its REST API — plain fetch, no npm dependency. */
+class RedisHandoffStore {
+  constructor({ url, token, fetch: fetchImpl = globalThis.fetch }) {
+    if (!url || !token) throw new Error('RedisHandoffStore needs a REST url and token.');
+    this.kind = 'redis';
+    this.url = url.replace(/\/+$/, '');
+    this.token = token;
+    this.fetch = fetchImpl;
+  }
+
+  async command(args) {
+    const [result] = await this.pipeline([args]);
+    return result;
+  }
+
+  async pipeline(commands) {
+    const res = await this.fetch(this.url + '/pipeline', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(commands),
+    });
+    let body;
+    try { body = await res.json(); } catch { body = null; }
+    if (!res.ok || !Array.isArray(body)) {
+      const why = (body && body.error) || `HTTP ${res.status}`;
+      throw new Error(`Redis request failed: ${why}`);
+    }
+    return body.map((r) => {
+      if (r && r.error) throw new Error(`Redis error: ${r.error}`);
+      return r ? r.result : null;
+    });
+  }
+
+  async claim(code, entry, ttlMs) {
+    const seconds = Math.max(1, Math.ceil(ttlMs / 1000));
+    const result = await this.command(['SET', KEY_PREFIX + code, JSON.stringify(entry), 'NX', 'EX', String(seconds)]);
+    return result === 'OK';
+  }
+
+  async get(code) {
+    const text = await this.command(['GET', KEY_PREFIX + code]);
+    if (typeof text !== 'string') return null;
+    let entry;
+    try { entry = JSON.parse(text); } catch { return null; }
+    if (!entry || entry.expiresAt <= Date.now()) return null;
+    return entry;
+  }
+
+  async hit(bucket, windowMs) {
+    const key = RATE_PREFIX + bucket;
+    // Create the window's counter with its expiry, then count; INCR keeps the TTL.
+    const [, count] = await this.pipeline([
+      ['SET', key, '0', 'PX', String(windowMs), 'NX'],
+      ['INCR', key],
+    ]);
+    return Number(count) || 0;
+  }
+
+  async ping() {
+    return (await this.command(['PING'])) === 'PONG';
+  }
+}
+
+/**
+ * Redis when its credentials are set (Vercel's Upstash integration sets KV_REST_API_*;
+ * a direct Upstash database uses UPSTASH_REDIS_REST_*), memory otherwise. On Vercel,
+ * memory would hand out codes other instances can't see, so it refuses instead.
+ */
+function createStore(env = process.env) {
+  const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
+  const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
+  if (url && token) return new RedisHandoffStore({ url, token });
+  if (env.VERCEL) {
+    throw new Error('No Redis configured. Connect Upstash Redis to this Vercel project (it sets KV_REST_API_URL and KV_REST_API_TOKEN).');
+  }
+  return new MemoryHandoffStore();
+}
+
 /** Store a scan and return its code, retrying on the (unlikely) collision. */
-function storeScan(store, scan, now = Date.now(), ttlMs = HANDOFF_TTL_MS) {
+async function storeScan(store, scan, now = Date.now(), ttlMs = HANDOFF_TTL_MS) {
   for (let attempt = 0; attempt < 8; attempt++) {
     const code = newCode();
-    if (store.get(code)) continue;
     const entry = { scan, createdAt: now, expiresAt: now + ttlMs };
-    store.put(code, entry);
-    return { code, ...entry };
+    if (await store.claim(code, entry, ttlMs)) return { code, ...entry };
   }
   throw new Error('could not allocate a handoff code');
 }
 
 /** Look up a scan by whatever the person typed. */
-function fetchScan(store, input) {
+async function fetchScan(store, input) {
   const code = normaliseCode(input);
   if (!code) return null;
-  const entry = store.get(code);
+  const entry = await store.get(code);
   return entry ? { code, ...entry } : null;
 }
 
@@ -104,6 +209,8 @@ module.exports = {
   HANDOFF_TTL_MS,
   MAX_SCAN_BYTES,
   MemoryHandoffStore,
+  RedisHandoffStore,
+  createStore,
   newCode,
   normaliseCode,
   storeScan,

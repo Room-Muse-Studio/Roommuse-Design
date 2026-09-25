@@ -33,7 +33,7 @@
     {
       "type": "socket",
       "wall": 0,
-      "offset": 900,
+      "offset": 2400,
       "height": 1100,
       "source": "detected",
       "confidence": 0.9

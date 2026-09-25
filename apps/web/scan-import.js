@@ -243,7 +243,14 @@
     var other = count(t.services, function (s) { return s.scanType !== 'socket'; });
     if (other) parts.push(plural(other, 'other service point'));
     if (t.obstacles.length) parts.push(plural(t.obstacles.length, 'obstacle'));
-    return { text: 'Scan loaded' + (fileName ? ' from ' + fileName : '') + ': ' + parts.join(' · '), warnings: t.warnings };
+    return {
+      text: 'Scan loaded' + (fileName ? ' from ' + fileName : '') + ': ' + parts.join(' · ') +
+        // The workflow lists the water, drainage and appliance power it needs (wfServices in the
+        // prototype) whether or not the scan found them; say so, or they read as scan errors.
+        '\nThe workflow also lists the water, drainage and appliance power a kitchen needs. ' +
+        'The scan can’t see pipes, so mark those positions under “Connections and mobility”.',
+      warnings: t.warnings,
+    };
   }
 
   // ── 3D markers for doors, windows and service points ──────────────────
@@ -383,21 +390,70 @@
     status.hidden = !text;
   }
 
+  // Close the message on a press anywhere outside the scan section. Capture phase,
+  // because the 3D canvas stops some events; pointerdown, so the script's own
+  // programmatic click on "Start Workflow Auto Design" doesn't close it.
+  document.addEventListener('pointerdown', function (e) {
+    if (!status.hidden && !section.contains(e.target)) setStatus('');
+  }, true);
+
+  /** Cabinets in the kitchen the scan would replace (0 when nothing is saved yet). */
+  function cabinetCount() {
+    var saved = readSaved();
+    if (!saved) return 0;
+    var kitchen = saved.spaces.find(function (s) { return s.id === saved.activeSpace && s.room === 'kitchen'; }) ||
+      saved.spaces.find(function (s) { return s.room === 'kitchen'; });
+    return kitchen && Array.isArray(kitchen.items) ? kitchen.items.length : 0;
+  }
+
+  /** In-page yes/no inside the scan section; resolves true for Replace. */
+  function confirmReplace(cabinets) {
+    return new Promise(function (resolve) {
+      setStatus('');
+      var previous = section.querySelector('[role="alertdialog"]');
+      if (previous) previous.remove();
+      var box = document.createElement('div');
+      box.setAttribute('role', 'alertdialog');
+      box.style.cssText = 'flex-basis:100%;background:#fff;border:1px solid #C33A20;border-radius:6px;padding:8px 10px;box-shadow:0 1px 4px rgba(0,0,0,.08)';
+      var text = document.createElement('div');
+      text.textContent = 'Replace the current kitchen with the scanned room? Its ' + cabinets + ' cabinet' + (cabinets === 1 ? '' : 's') +
+        ' will be cleared; the previous project is kept as a backup.';
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+      var button = function (label, primary, value) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.style.cssText = 'padding:5px 10px;border:1px solid #C33A20;border-radius:6px;cursor:pointer;font:600 12px -apple-system,BlinkMacSystemFont,sans-serif;' +
+          (primary ? 'background:#C33A20;color:#fff' : 'background:#fff;color:#C33A20');
+        b.addEventListener('click', function () { box.remove(); resolve(value); });
+        return b;
+      };
+      var yes = button('Replace kitchen', true, true);
+      row.appendChild(yes);
+      row.appendChild(button('Cancel', false, false));
+      box.appendChild(text);
+      box.appendChild(row);
+      section.appendChild(box);
+      yes.focus();
+    });
+  }
+
   function importText(text, fileName) {
     setStatus('Reading scan…');
     return parse(text).then(function (scan) {
-      var ok = window.confirm(
-        'Replace the current kitchen with the scanned room?\n\n' +
-        'Cabinets in the kitchen will be cleared. Your previous saved project is kept as a backup.');
-      if (!ok) { setStatus(''); return; }
-      apply(scan, fileName);
+      var cabinets = cabinetCount();
+      return (cabinets ? confirmReplace(cabinets) : Promise.resolve(true)).then(function (ok) {
+        if (!ok) { setStatus(''); return; }
+        apply(scan, fileName);
+      });
     }).catch(function (e) { setStatus(e.message, true); });
   }
 
   /** Fetch a scan the iPad uploaded, by its 6-character code. */
   function importCode(input) {
     var code = String(input || '').trim();
-    if (!code) { setStatus('Type the 6-character code shown on the iPad.', true); return Promise.resolve(); }
+    if (!code) { setStatus('Type the 6-character code shown in the MOZU Scanner app.', true); return Promise.resolve(); }
     if (window.location.protocol === 'file:') {
       setStatus('Codes need the MOZU server. In Terminal run "npm start" in the mozu-design folder, then open http://localhost:3000', true);
       return Promise.resolve();
@@ -411,7 +467,7 @@
         });
       })
       .catch(function (e) {
-        setStatus(e instanceof TypeError ? 'Could not reach the MOZU server. Is it still running?' : e.message, true);
+        setStatus(e instanceof TypeError ? 'Could not reach MOZU. Check the internet connection and try again.' : e.message, true);
       });
   }
 
@@ -443,7 +499,7 @@
     if (params.get('scan') || params.get('poly')) {
       var text;
       try { text = scanFromLink(params); } catch (e) { setStatus('The scan link is damaged and could not be read.', true); return; }
-      return importText(text, 'iPad link');
+      return importText(text, 'phone link');
     }
   }
 
@@ -483,11 +539,14 @@
     if (!info) return;
     setStatus(info.text + (info.warnings && info.warnings.length ? '\n⚠ ' + info.warnings.join('\n⚠ ') : ''));
     // Open the Kitchen Workflow room setup, where the doors and sockets are drawn.
+    // A first visit unpacks a large page, so give the button up to a minute to appear.
     var tries = 0;
     var opener = setInterval(function () {
-      var start = Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return b.textContent.trim() === 'Start Workflow Auto Design'; });
+      var start = Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
+        return b.textContent.trim() === 'Start Workflow Auto Design' && b.offsetParent !== null;
+      });
       if (start) { clearInterval(opener); start.click(); }
-      else if (++tries > 40) clearInterval(opener);
+      else if (++tries > 240) clearInterval(opener);
     }, 250);
   }
 })();

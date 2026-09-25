@@ -55,6 +55,11 @@ enum Handoff {
 /// read out, type, or photograph.
 enum ScanHandoff {
 
+    /// The production MOZU web address (Vercel). Scans go here unless the
+    /// Advanced address on the floorplan screen is changed, e.g. to a laptop
+    /// running `npm start` for local testing.
+    static let defaultWebBase = "https://roommuse-design.vercel.app"
+
     struct Ticket: Equatable {
         /// Six characters from an unambiguous alphabet — no O/0, no I/1/L.
         let code: String

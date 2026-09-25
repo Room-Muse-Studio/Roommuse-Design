@@ -6,7 +6,7 @@ import SwiftUI
 
 struct FloorplanResultView: View {
     var onRescan: () -> Void
-    @AppStorage("mozuWebBase") private var webBase = "https://app.mozu.example"
+    @AppStorage("mozuWebBase") private var webBase = ScanHandoff.defaultWebBase
 
     /// The scan, editable — sockets the detector missed can be added by hand
     /// right here, so correcting a plan never means leaving the app.
@@ -67,13 +67,40 @@ struct FloorplanResultView: View {
                 .padding(.horizontal, 16)
 
             VStack(spacing: 10) {
+                // The handoff people actually need: scan here, design on a
+                // laptop. A deep link cannot cross that gap and a whole house
+                // does not fit in a URL, so the scan is uploaded and comes back
+                // as six characters to type on the website.
+                Button {
+                    Task { await sendToWeb() }
+                } label: {
+                    Label(
+                        sending ? "Sending…" : "Send to MOZU web",
+                        systemImage: "arrow.up.forward.app"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(sending)
+
+                if let ticket {
+                    handoffTicket(ticket)
+                }
+                if let sendError {
+                    Text(sendError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 Button {
                     showDesign = true
                 } label: {
                     Label("Design room", systemImage: "cube.transparent")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.large)
 
                 Button {
@@ -90,36 +117,9 @@ struct FloorplanResultView: View {
                 .tint(editingSockets ? .accentColor : .secondary)
                 .controlSize(.large)
 
-                // The handoff people actually need: scan here, design on a
-                // laptop. A deep link cannot cross that gap and a whole house
-                // does not fit in a URL, so the scan is uploaded and comes back
-                // as six characters to type on the website.
-                Button {
-                    Task { await sendToWeb() }
-                } label: {
-                    Label(
-                        sending ? "Sending…" : "Send to MOZU web",
-                        systemImage: "arrow.up.forward.app"
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .disabled(sending)
-
-                if let ticket {
-                    handoffTicket(ticket)
-                }
-                if let sendError {
-                    Text(sendError)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
                 if let url = Handoff.url(webBase: webBase, scan: scan) {
                     Link(destination: url) {
-                        Label("Open in MOZU on this iPad", systemImage: "safari")
+                        Label("Open in MOZU on this device", systemImage: "safari")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -141,11 +141,25 @@ struct FloorplanResultView: View {
                     .buttonStyle(.bordered)
                 }
 
-                TextField("MOZU web address", text: $webBase)
-                    .textFieldStyle(.roundedBorder)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.footnote)
+                // Only for testing against a laptop server; everyone else uses
+                // the production address and never sees this.
+                DisclosureGroup("Advanced") {
+                    HStack(spacing: 8) {
+                        TextField("MOZU web address", text: $webBase)
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                        if webBase != ScanHandoff.defaultWebBase {
+                            Button("Reset") { webBase = ScanHandoff.defaultWebBase }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
             .padding(16)
         }
@@ -172,7 +186,7 @@ struct FloorplanResultView: View {
     @ViewBuilder
     private func handoffTicket(_ ticket: ScanHandoff.Ticket) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Open MOZU on your computer and enter")
+            Text("On your computer, go to \(URL(string: ticket.url)?.host ?? "MOZU") and enter")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(ticket.code)

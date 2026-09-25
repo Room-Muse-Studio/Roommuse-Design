@@ -1,12 +1,14 @@
 {
   "name": "mozu-design",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "MOZU iPad room scanner + web prototype, with a small server for the 6-character scan handoff.",
+  "description": "MOZU iPhone/iPad room scanner + web prototype, with the 6-character scan handoff (local Node server or Vercel + Redis).",
   "scripts": {
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "test": "node --test",
+    "build": "node scripts/build-web.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }
