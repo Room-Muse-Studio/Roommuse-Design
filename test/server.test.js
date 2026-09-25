@@ -103,6 +103,14 @@ test('local server: /scan links, static files, health', async (t) => {
   const home = await fetch(base + '/', { method: 'HEAD' });
   assert.equal(home.status, 200);
   assert.match(home.headers.get('content-type'), /text\/html/);
+  // The shell at / is small; the packed prototype lives at /editor.html.
+  assert.ok(Number(home.headers.get('content-length')) < 100_000, 'shell page is small');
+  const editor = await fetch(base + '/editor.html', { method: 'HEAD' });
+  assert.equal(editor.status, 200);
+  assert.ok(Number(editor.headers.get('content-length')) > 10_000_000, 'editor.html is the packed prototype');
+  for (const file of ['/shell.js', '/shell.css', '/shell-config.js', '/project-sync.js']) {
+    assert.equal((await fetch(base + file)).status, 200, file);
+  }
 
   const health = await fetch(base + '/api/health');
   assert.deepEqual(await health.json(), { ok: true, store: 'memory' });

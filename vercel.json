@@ -4,7 +4,7 @@
   "buildCommand": "node scripts/build-web.js",
   "outputDirectory": "public",
   "functions": {
-    "api/*.js": {
+    "api/**/*.js": {
       "includeFiles": "packages/scan-sdk/dist/**",
       "maxDuration": 15
     }
@@ -14,6 +14,12 @@
     { "source": "/scan/:code", "destination": "/api/scan-link?code=:code" }
   ],
   "headers": [
+    {
+      "source": "/editor.html",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'self'" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [

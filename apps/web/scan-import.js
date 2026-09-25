@@ -222,9 +222,13 @@
     } catch (e) {
       throw new Error('The browser would not let the page save the room (storage is blocked or full).');
     }
-    // Drop ?code= / ?scan= so the reload doesn't import the same room again.
-    if (LINK_PARAMS.some(function (k) { return new URLSearchParams(window.location.search).has(k); })) {
-      window.location.replace(window.location.pathname + window.location.hash);
+    // Drop ?code= / ?scan= so the reload doesn't import the same room again,
+    // but keep anything else (the shell's ?project=… must survive).
+    var params = new URLSearchParams(window.location.search);
+    if (LINK_PARAMS.some(function (k) { return params.has(k); })) {
+      LINK_PARAMS.concat(['h', 'src']).forEach(function (k) { params.delete(k); });
+      var rest = params.toString();
+      window.location.replace(window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
     } else {
       window.location.reload();
     }
