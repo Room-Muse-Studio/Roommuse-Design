@@ -390,6 +390,13 @@
     status.hidden = !text;
   }
 
+  // Close the message on a press anywhere outside the scan section. Capture phase,
+  // because the 3D canvas stops some events; pointerdown, so the script's own
+  // programmatic click on "Start Workflow Auto Design" doesn't close it.
+  document.addEventListener('pointerdown', function (e) {
+    if (!status.hidden && !section.contains(e.target)) setStatus('');
+  }, true);
+
   /** Cabinets in the kitchen the scan would replace (0 when nothing is saved yet). */
   function cabinetCount() {
     var saved = readSaved();

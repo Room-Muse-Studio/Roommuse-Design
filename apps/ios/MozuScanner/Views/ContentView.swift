@@ -7,12 +7,18 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var controller = RoomCaptureController()
+    /// On a device without LiDAR: the sample room opened from the unsupported screen.
+    @State private var sampleRoom: RoomScan?
 
     var body: some View {
         NavigationStack {
             Group {
                 if !RoomCaptureSession.isSupported {
-                    UnsupportedView()
+                    if let sampleRoom {
+                        FloorplanResultView(scan: sampleRoom) { self.sampleRoom = nil }
+                    } else {
+                        UnsupportedView { sampleRoom = .sampleKitchen() }
+                    }
                 } else {
                     switch controller.phase {
                     case .done(let scans) where scans.count == 1:
@@ -35,6 +41,7 @@ struct ContentView: View {
     }
 
     private var title: String {
+        if sampleRoom != nil { return "2 · Floorplan (sample)" }
         switch controller.phase {
         case .done: return "2 · Floorplan"
         default: return "1 · Scan"
@@ -43,11 +50,33 @@ struct ContentView: View {
 }
 
 private struct UnsupportedView: View {
+    var onTrySample: () -> Void
     var body: some View {
-        ContentUnavailableView(
-            "LiDAR required",
-            systemImage: "ruler",
-            description: Text("RoomPlan needs a LiDAR device (iPhone Pro / iPad Pro). Use the MOZU web app's camera or AR measure on other devices.")
+        ContentUnavailableView {
+            Label("LiDAR required", systemImage: "ruler")
+        } description: {
+            Text("Scanning needs a LiDAR device (iPhone 12 Pro or later Pro model, or iPad Pro). You can still try the rest of the app with a sample room.")
+        } actions: {
+            Button("Try with a sample room", action: onTrySample)
+                .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+extension RoomScan {
+    /// The 4 m × 3 m kitchen from samples/kitchen.roomscan.json: one door, two
+    /// sockets. Lets a device without LiDAR walk through the floorplan and send flow.
+    static func sampleKitchen() -> RoomScan {
+        RoomScan(
+            polygon: [Vec2(x: 0, z: 0), Vec2(x: 4000, z: 0), Vec2(x: 4000, z: 3000), Vec2(x: 0, z: 3000)],
+            height: 2500,
+            openings: [ScanOpening(type: .door, wall: 0, offset: 800, width: 900, height: 2050, sill: nil)],
+            fixtures: [
+                ScanFixture(type: .socket, wall: 0, offset: 2400, height: 1100, source: .detected, confidence: 0.9),
+                ScanFixture(type: .socket, wall: 1, offset: 1500, height: 300, source: .detected, confidence: 0.8),
+            ],
+            source: .manual,
+            confidence: 1
         )
     }
 }

@@ -50,7 +50,7 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.mozu.scanner
+        PRODUCT_BUNDLE_IDENTIFIER: com.averyhsu.roommuse
         INFOPLIST_FILE: MozuScanner/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_PREVIEWS: YES
