@@ -1,9 +1,11 @@
 # MOZU Design
 
 Scan a room with a LiDAR iPhone or iPad, then open it in the MOZU Kitchen Workflow prototype on any computer.
+Sign in to keep every design as a project in your account; every change is saved as you work.
 
 ```
 phone app ──scan──▶ MOZU web (Vercel) ──6-character code──▶ type it on the laptop ──▶ room appears in the prototype
+                                                                                    └──▶ autosaved to your account
 ```
 
 ## What's in this folder
@@ -11,13 +13,18 @@ phone app ──scan──▶ MOZU web (Vercel) ──6-character code──▶ 
 | Folder / file | What it is |
 |---|---|
 | `apps/ios/` | The scanning app (Swift, RoomPlan + LiDAR, socket detection) |
-| `apps/web/index.html` | The prototype, one packed file. The only addition is the scan import section at the very end. |
+| `apps/web/index.html`, `shell.js`, `shell.css` | The app shell: sign-in, the projects gallery, and the header around the editor |
+| `apps/web/shell-config.js` | Public Firebase settings for sign-in (fill in once, see *Accounts & projects*) |
+| `apps/web/editor.html` | The prototype, one packed file, shown inside the shell. The only additions are the scan import section and two script tags at the very end. |
 | `apps/web/scan-import.js` | Turns a room scan into the prototype's room format, and draws doors/sockets in 3D |
+| `apps/web/project-sync.js` | Runs inside the editor: autosaves the open project to the account |
 | `packages/scan-sdk/` | The shared `mozu.roomscan/1` format and floorplan engine |
 | `server/handoff-store.js` | Codes: 6 characters, 24 hours, stored in Redis (production) or memory (laptop) |
-| `server/handoff-api.js` | The handoff API, shared by the laptop server and Vercel |
+| `server/app-store.js` | Users, sessions and projects on the same Redis / memory store |
+| `server/handoff-api.js`, `auth-api.js`, `project-api.js` | The APIs, shared by the laptop server and Vercel |
+| `server/firebase-token.js` | Checks Firebase sign-in tokens with `node:crypto` (no SDK) |
 | `server/server.js` | Laptop server (`npm start`) |
-| `api/` | The same API as Vercel functions |
+| `api/` | The same APIs as Vercel functions |
 | `vercel.json`, `scripts/build-web.js` | Vercel build and routing |
 | `test/` | `npm test` (also runs on every push, `.github/workflows/test.yml`) |
 | `samples/kitchen.roomscan.json` | A 4 m × 3 m kitchen with a door and two sockets, for testing |
@@ -54,12 +61,63 @@ There are no npm dependencies. Node 20 or newer is needed to run it locally.
 5. **Build the address into the app:** set `ScanHandoff.defaultWebBase` in
    `apps/ios/MozuScanner/Export/Handoff.swift` to the production address, then reinstall the app.
 
-### Optional settings (Vercel → Settings → Environment Variables)
+### Settings (Vercel → Settings → Environment Variables)
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `FIREBASE_PROJECT_ID` | – | **Needed for sign-in.** The Firebase project id (see *Accounts & projects*). Without it sign-in answers 503. |
 | `RATE_LIMIT_UPLOADS` | `20` | Scans one network may upload per 10 minutes (`0` = no limit) |
 | `RATE_LIMIT_LOOKUPS` | `60` | Code lookups one network may make per 10 minutes, so codes can't be guessed |
+| `RATE_LIMIT_SESSIONS` | `30` | Sign-ins one network may attempt per 10 minutes |
+| `RATE_LIMIT_READS` / `RATE_LIMIT_WRITES` | `600` / `300` | Project reads / saves one account may make per 10 minutes |
+| `SESSION_TTL_DAYS` | `30` | How long a sign-in lasts (renewed on use) |
+| `MAX_PROJECT_BYTES` | `524288` | Largest project (512 KB; a full kitchen is ~10–40 KB) |
+| `MAX_PROJECTS_PER_USER` | `100` | Projects per account |
+
+---
+
+## Accounts & projects
+
+Sign-in uses **Firebase Authentication** (free): email + password, or Google. Firebase only proves who the
+person is; MOZU's own server then issues a 30-day session cookie and keeps the projects in Redis, next to
+the scan codes. Passwords never reach our server, and password-reset / verification emails come from Firebase.
+
+### One-time setup (about 15 minutes)
+
+1. Go to **console.firebase.google.com** → **Create a project** (any name, e.g. `roommuse`; Analytics can be
+   off). The free **Spark** plan is enough.
+2. **Build → Authentication → Get started**. On **Sign-in method** enable **Email/Password**, then **Google**
+   (pick a support email).
+3. **Authentication → Settings → Authorized domains → Add domain**: your Vercel address
+   (e.g. `roommuse-design.vercel.app`). `localhost` is already listed.
+4. **Project settings** (gear) → **Your apps** → **</> Web** → register an app (no hosting). Copy `apiKey`,
+   `authDomain` and `projectId` from the config it shows into `apps/web/shell-config.js`. These are public
+   values; the Authorized domains list is what protects them. Optionally restrict the API key by HTTP
+   referrer in Google Cloud Console.
+5. In Vercel → **Settings → Environment Variables** add `FIREBASE_PROJECT_ID` = the same `projectId`, for
+   Production, Preview and Development. Redeploy.
+6. Optional: **Authentication → Templates** to put the MOZU name on the reset and verification emails.
+
+Until steps 4–5 are done the site shows "Sign-in isn't set up yet" and offers guest mode only.
+
+### How it works
+
+- `/` is the shell. Signed out: the sign-in screen (or, while unconfigured, straight into guest mode).
+  Signed in: **My projects**, a gallery with New / Open / Rename / Duplicate / Delete.
+- Opening a project writes it into the prototype's own "saved project" slot in the browser and loads
+  `editor.html?project=<id>` in a frame; the prototype restores the slot exactly as it always has.
+- `project-sync.js` watches the editor and saves 2 seconds after the last change (10 at most), also when the
+  tab is hidden or closed, or when you go back to the gallery. The header shows *Saved 12:03*, *Saving…*,
+  *Offline — changes are kept on this device*, or *Changed elsewhere* with a choice of versions when the same
+  project was saved from another tab or device.
+- **Guest mode** ("Try without an account") is the old behaviour: everything stays in that browser. A design
+  saved there shows up as **Import the design saved on this device** after signing in.
+- A scan code (`/scan/B7K4M2` or `/?code=`) while signed in creates a new project for the room; signed out it
+  loads into guest mode as before.
+- Sessions and projects are checked on every request: a project belongs to the account that created it, others
+  get a 404. Writes require same-origin JSON requests (no cross-site forms), and per-account rate limits keep a
+  runaway page from filling the store.
+- Email verification is encouraged with a banner (and a resend button), not required.
 
 ---
 
@@ -96,9 +154,10 @@ plug in and press ⌘R again to refresh it.
    windows and sockets. Tap **Finish room**, then **Use this room**. (Send one room at a time: the multi-room
    "Build house" screen has no send button.)
 2. On the floorplan screen, tap **Send to MOZU web**. A 6-character code appears, e.g. `B7K4M2`.
-3. On any computer, open the production address, type the code in the box at the top (upper or lower case,
-   dashes and spaces are fine) and click **Load code**. If the kitchen already has cabinets you'll be asked
-   before they're replaced.
+3. On any computer, open the production address and sign in (or choose **Try without an account**). Open a
+   project, type the code in the box at the top (upper or lower case, dashes and spaces are fine) and click
+   **Load code**. If the kitchen already has cabinets you'll be asked before they're replaced. Opening
+   `…/scan/B7K4M2` directly while signed in creates a new project for the room.
 4. The page reloads with your room and opens the Kitchen Workflow room setup. Width, depth, ceiling height,
    doors, windows and sockets are filled in. Choose each door's opening direction there (the scan can't tell
    which side the hinges are on). The workflow also lists the water, drainage and appliance power a kitchen needs;
@@ -111,12 +170,16 @@ Codes last 24 hours. If a code has expired, tap **Send to MOZU web** again; you 
 ## Local development
 
 ```bash
-npm start          # http://localhost:3000, codes kept in memory
-npm test           # store, API, rate limits, /scan links, Vercel functions
+npm start          # http://localhost:3000, codes, sessions and projects kept in memory
+npm test           # stores, handoff / auth / projects APIs, rate limits, /scan links, Vercel functions
+npm run build      # what Vercel runs: assembles public/
 ```
 
 `npm start` uses Redis instead of memory if `KV_REST_API_URL` and `KV_REST_API_TOKEN` are set (for example
-after `vercel env pull .env`, then `set -a; . ./.env; set +a; npm start`).
+after `vercel env pull .env`, then `set -a; . ./.env; set +a; npm start`). Sign-in works locally once
+`shell-config.js` is filled in and `FIREBASE_PROJECT_ID` is exported (`localhost` is an authorized domain by
+default); without them the local site runs in guest mode, and `http://localhost:3000/?signin` shows the sign-in
+screen anyway. Tests never need Firebase: they sign tokens with a throw-away key.
 
 Pretend to be the phone:
 ```bash
@@ -165,11 +228,17 @@ the app's **Advanced → MOZU web address** field. **Reset** there returns to pr
 
 | Address | What it does |
 |---|---|
-| `/` | the prototype |
-| `/?code=B7K4M2` or `/scan/B7K4M2` | opens the prototype and loads that code |
+| `/` | the shell: sign-in, then **My projects**; `/?open=<id>` reopens a project, `/?signin` forces the sign-in screen, `/?guest` guest mode |
+| `/editor.html` | the prototype itself (the shell loads it in a frame; opened directly it sends you back to `/`) |
+| `/?code=B7K4M2` or `/scan/B7K4M2` | loads that code: into a new project when signed in, into guest mode otherwise |
 | `/scan?poly=…&h=…&scan=…` | the app's "Open in MOZU on this device" link |
 | `POST /api/scan-handoff` | upload a scan → `{ code, url, expiresAt }` (201), or `{ error }` with 400, 413, 429 or 503 |
 | `GET /api/scan-handoff?code=…` | fetch it → `{ code, scan, expiresAt }` (200), 400 bad code, 404 unknown/expired, 429 |
+| `POST /api/auth/session` `{ idToken }` | exchange a Firebase sign-in for the session cookie → `{ user }` (201) |
+| `GET /api/auth/me` · `DELETE /api/auth/session` | who am I (200 / 401) · sign out |
+| `GET` / `POST /api/projects` | list `{ projects }` · create `{ name?, data?, source? }` → `{ project }` (201) |
+| `GET` / `PUT` / `PATCH` / `DELETE /api/projects/:id` | open `{ project, data }` · save `{ rev, data }` → `{ rev, updatedAt }` or 409 · rename `{ name?, clientName? }` · delete |
+| `POST /api/projects/:id/duplicate` | copy → `{ project }` (201) |
 | `GET /api/health` | `{ ok: true, store }` (200), or 503 when the store can't be reached |
 
 ---
@@ -183,7 +252,12 @@ the app's **Advanced → MOZU web address** field. **Reset** there returns to pr
 | "MOZU could not reach its storage" (503) | Redis isn't connected to the Vercel project, or Upstash is down. Check `/api/health` and the project's Storage tab. |
 | "That code was not found or has expired" | Codes last 24 hours. Tap **Send to MOZU web** again; you don't need to rescan. |
 | Page is slow the first time | The prototype is one large file (about 30 MB compressed). Later visits load from the browser cache. |
-| Code box says "Codes need the MOZU server" | You opened `index.html` by double-clicking it. Use the production address or `npm start`. |
+| "Sign-in isn't set up on this site yet" | `apps/web/shell-config.js` is still empty. Follow *Accounts & projects → One-time setup*. |
+| Sign-in says the site isn't authorised (`auth/unauthorized-domain`) | Add the site's domain under Firebase → Authentication → Settings → Authorized domains. |
+| Sign-in answers 503 "not configured" | `FIREBASE_PROJECT_ID` is missing from the Vercel environment variables. |
+| Header says "Changed elsewhere" | The same project was saved from another tab or device. Choose **Reload their version** or **Keep mine** in the editor. |
+| Header says "This project couldn't be opened by this version of the planner" | The prototype refused to restore it (an unknown product code or an overlap), so autosave is off to protect the saved copy. Duplicate it and try there, or report it. |
+| Code box says "Codes need the MOZU server" | You opened `editor.html` by double-clicking it. Use the production address or `npm start`. |
 | "Port 3000 is already in use" | `PORT=3100 npm start`, or stop the other server: `lsof -ti:3000 \| xargs kill` |
 | Xcode: "Signing for MozuScanner requires a development team" | Install step 4: pick your Team. |
 | Xcode: "Failed to register bundle identifier" | Choose a unique bundle identifier (install step 4). |
