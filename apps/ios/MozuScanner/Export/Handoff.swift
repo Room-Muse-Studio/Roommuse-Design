@@ -90,7 +90,11 @@ enum ScanHandoff {
     }
 
     /// Upload the scan. Returns the ticket to show the user.
-    static func send(_ scan: RoomScan, webBase: String) async throws -> Ticket {
+    ///
+    /// `session` is the id from an App Clip invocation URL (`/clip?s=…`). When
+    /// present it rides along in the JSON so the laptop page that showed the QR
+    /// code can load the room without anyone typing the code.
+    static func send(_ scan: RoomScan, webBase: String, session: String? = nil) async throws -> Ticket {
         var base = webBase.trimmingCharacters(in: .whitespaces)
         while base.hasSuffix("/") { base.removeLast() }
         guard let endpoint = URL(string: base + "/api/scan-handoff"), endpoint.host != nil else {
@@ -100,7 +104,7 @@ enum ScanHandoff {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = scan.jsonData()
+        request.httpBody = body(for: scan, session: session)
         // A survey happens in a kitchen, which is where the signal is worst;
         // failing fast with a clear message beats a spinner that never resolves.
         request.timeoutInterval = 20
@@ -128,5 +132,44 @@ enum ScanHandoff {
             throw Failure.malformedResponse
         }
         return Ticket(code: code, url: url, expiresAt: object["expiresAt"] as? String)
+    }
+
+    /// The scan JSON, plus `"session"` when there is one. The session is added
+    /// around the encoded scan rather than to `RoomScan` itself, so the
+    /// `mozu.roomscan/1` contract stays exactly what the SDK and the web speak.
+    static func body(for scan: RoomScan, session: String?) -> Data? {
+        guard let data = scan.jsonData() else { return nil }
+        guard let session, ClipInvocation.isValidSession(session),
+              var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return data
+        }
+        object["session"] = session
+        return try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])
+    }
+
+    // MARK: Hand-off to the full app
+
+    /// Shared container both the App Clip and the full app can read.
+    static let appGroup = "group.com.averyhsu.roommuse"
+    private static let lastTicketKey = "mozu.lastTicket"
+
+    /// Keep the most recent code where the full app can find it after install,
+    /// so a person who upgrades from the clip still sees "your last scan code".
+    static func remember(_ ticket: Ticket) {
+        guard let defaults = UserDefaults(suiteName: appGroup) else { return }
+        defaults.set(
+            ["code": ticket.code, "url": ticket.url, "expiresAt": ticket.expiresAt ?? "", "savedAt": ISO8601DateFormatter().string(from: Date())],
+            forKey: lastTicketKey
+        )
+    }
+
+    /// The ticket the clip left behind, if it hasn't expired.
+    static func rememberedTicket() -> Ticket? {
+        guard let defaults = UserDefaults(suiteName: appGroup),
+              let saved = defaults.dictionary(forKey: lastTicketKey),
+              let code = saved["code"] as? String, let url = saved["url"] as? String else { return nil }
+        let expiresAt = saved["expiresAt"] as? String
+        if let expiresAt, let date = ISO8601DateFormatter().date(from: expiresAt), date < Date() { return nil }
+        return Ticket(code: code, url: url, expiresAt: expiresAt)
     }
 }

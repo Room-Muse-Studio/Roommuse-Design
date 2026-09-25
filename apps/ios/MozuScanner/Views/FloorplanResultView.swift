@@ -3,9 +3,14 @@
 // scan again.
 
 import SwiftUI
+#if APPCLIP
+import StoreKit
+#endif
 
 struct FloorplanResultView: View {
     var onRescan: () -> Void
+    /// App Clip invocation session (see ClipInvocation); nil in the full app.
+    var session: String?
     @AppStorage("mozuWebBase") private var webBase = ScanHandoff.defaultWebBase
 
     /// The scan, editable — sockets the detector missed can be added by hand
@@ -25,16 +30,22 @@ struct FloorplanResultView: View {
     /// user chose, so placing a row of sockets is one tap each.
     @State private var newSocketHeight = FloorplanResultView.defaultSocketHeightMm
 
+    #if APPCLIP
+    /// Offers the full app (App Store overlay) — the clip has no 3D design room.
+    @State private var showFullApp = false
+    #else
     /// Presents the on-device 3D/2D design experience (place & style furniture).
     @State private var showDesign = false
+    #endif
 
     /// The handoff to the web platform: upload state and the code to read out.
     @State private var sending = false
     @State private var ticket: ScanHandoff.Ticket?
     @State private var sendError: String?
 
-    init(scan: RoomScan, onRescan: @escaping () -> Void) {
+    init(scan: RoomScan, session: String? = nil, onRescan: @escaping () -> Void) {
         _scan = State(initialValue: scan)
+        self.session = session
         self.onRescan = onRescan
     }
 
@@ -94,6 +105,16 @@ struct FloorplanResultView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                #if APPCLIP
+                Button {
+                    showFullApp = true
+                } label: {
+                    Label("Get the full MOZU app for 3D design", systemImage: "cube.transparent")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                #else
                 Button {
                     showDesign = true
                 } label: {
@@ -102,6 +123,7 @@ struct FloorplanResultView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+                #endif
 
                 Button {
                     editingSockets.toggle()
@@ -127,6 +149,7 @@ struct FloorplanResultView: View {
                 }
 
                 HStack(spacing: 10) {
+                    #if !APPCLIP
                     ShareLink(
                         item: Handoff.prettyJSON(scan),
                         preview: SharePreview("MOZU room scan")
@@ -134,6 +157,7 @@ struct FloorplanResultView: View {
                         Label("Share scan", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    #endif
 
                     Button(action: onRescan) {
                         Label("Rescan", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
@@ -141,8 +165,10 @@ struct FloorplanResultView: View {
                     .buttonStyle(.bordered)
                 }
 
+                #if !APPCLIP
                 // Only for testing against a laptop server; everyone else uses
-                // the production address and never sees this.
+                // the production address and never sees this. The clip always
+                // talks to production (local networking isn't available to clips).
                 DisclosureGroup("Advanced") {
                     HStack(spacing: 8) {
                         TextField("MOZU web address", text: $webBase)
@@ -160,12 +186,19 @@ struct FloorplanResultView: View {
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                #endif
             }
             .padding(16)
         }
+        #if APPCLIP
+        .appStoreOverlay(isPresented: $showFullApp) {
+            SKOverlay.AppClipConfiguration(position: .bottom)
+        }
+        #else
         .fullScreenCover(isPresented: $showDesign) {
             DesignContainerView(scan: scan)
         }
+        #endif
     }
 
     // MARK: Web handoff
@@ -175,7 +208,14 @@ struct FloorplanResultView: View {
         sendError = nil
         defer { sending = false }
         do {
-            ticket = try await ScanHandoff.send(scan, webBase: webBase)
+            #if APPCLIP
+            // Clips can't reach a laptop server, so the Advanced address never applies.
+            let sent = try await ScanHandoff.send(scan, webBase: ScanHandoff.defaultWebBase, session: session)
+            ScanHandoff.remember(sent)
+            #else
+            let sent = try await ScanHandoff.send(scan, webBase: webBase, session: session)
+            #endif
+            ticket = sent
         } catch {
             ticket = nil
             sendError = error.localizedDescription

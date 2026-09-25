@@ -17,10 +17,14 @@ fs.rmSync(OUT, { recursive: true, force: true });
 fs.cpSync(path.join(ROOT, 'apps', 'web'), OUT, { recursive: true });
 fs.cpSync(path.join(ROOT, 'packages', 'scan-sdk', 'dist'), path.join(OUT, 'packages', 'scan-sdk', 'dist'), { recursive: true });
 
+// cpSync copies dotfolders too, so the App Clip's .well-known file comes along.
 const REQUIRED = [
   'index.html', 'shell.js', 'shell.css', 'shell-config.js',
   'editor.html', 'scan-import.js', 'project-sync.js',
   'packages/scan-sdk/dist/mozu-scan-sdk.global.js',
+  '.well-known/apple-app-site-association',
+  'clip/index.html',
+  'clip/qr.js',
 ];
 for (const required of REQUIRED) {
   if (!fs.existsSync(path.join(OUT, required))) {
