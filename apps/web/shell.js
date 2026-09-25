@@ -384,14 +384,24 @@
 
   // ── Editor ───────────────────────────────────────────────────────────
 
+  /** Small fast string hash (FNV-1a); project-sync.js computes the same to spot slot changes. */
+  function hashOf(text) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16);
+  }
+
   function writeSlot(pid, rev, name, data) {
     try {
-      window.localStorage.setItem(SLOT, JSON.stringify(data));
+      var json = JSON.stringify(data);
+      window.localStorage.setItem(SLOT, json);
       // Per-device scratch from another project must not leak into this one.
       window.localStorage.removeItem(SLOT_PREFIX + 'versions');
       window.localStorage.removeItem(SLOT_PREFIX + 'backups');
       window.localStorage.removeItem(SLOT + '.before-scan');
-      window.localStorage.setItem(SHELL_SLOT, JSON.stringify({ pid: pid, rev: rev, name: name, openedAt: Date.now() }));
+      // `hash` is what the account holds; if the slot differs on load (a scan was
+      // imported into it, say) project-sync saves straight away.
+      window.localStorage.setItem(SHELL_SLOT, JSON.stringify({ pid: pid, rev: rev, name: name, hash: hashOf(json), openedAt: Date.now() }));
       return true;
     } catch (e) {
       return false;
@@ -562,6 +572,7 @@
       if (err.status && err.status !== 401) setError('gallery-error', err.message);
     }).then(function () {
       renderAccount();
+      if (!state.user && params.has('signin')) return showLogin();
       if (wantsGuest || (!state.user && (isScanLink || !configured))) return openGuestEditor(isScanLink ? window.location.search : '');
       if (!state.user) {
         if (open) state.pendingOpen = open;
