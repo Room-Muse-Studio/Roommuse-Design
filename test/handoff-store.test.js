@@ -14,49 +14,7 @@ const {
   handoffUrl,
 } = require('../server/handoff-store');
 
-/** Just enough of Upstash's REST /pipeline endpoint to run the store against. */
-function fakeUpstash({ token = 'secret', now = () => Date.now() } = {}) {
-  const data = new Map(); // key → { value, expiresAt }
-  const live = (key) => {
-    const v = data.get(key);
-    if (v && v.expiresAt && v.expiresAt <= now()) { data.delete(key); return null; }
-    return v || null;
-  };
-  const run = ([cmd, key, ...args]) => {
-    switch (cmd.toUpperCase()) {
-      case 'PING': return 'PONG';
-      case 'GET': { const v = live(key); return v ? v.value : null; }
-      case 'SET': {
-        const opts = args.slice(1).map(String);
-        if (opts.includes('NX') && live(key)) return null;
-        const ex = opts.indexOf('EX'), px = opts.indexOf('PX');
-        const ttl = ex >= 0 ? Number(opts[ex + 1]) * 1000 : px >= 0 ? Number(opts[px + 1]) : 0;
-        data.set(key, { value: String(args[0]), expiresAt: ttl ? now() + ttl : 0 });
-        return 'OK';
-      }
-      case 'INCR': {
-        const v = live(key) || { value: '0', expiresAt: 0 };
-        v.value = String(Number(v.value) + 1);
-        data.set(key, v);
-        return Number(v.value);
-      }
-      default: return { error: `unknown command ${cmd}` };
-    }
-  };
-  const calls = [];
-  async function fetch(url, init) {
-    calls.push({ url, init });
-    if (init.headers.authorization !== `Bearer ${token}`) {
-      return { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) };
-    }
-    const body = JSON.parse(init.body).map((c) => {
-      const r = run(c);
-      return r && r.error ? r : { result: r };
-    });
-    return { ok: true, status: 200, json: async () => body };
-  }
-  return { fetch, data, calls };
-}
+const { fakeUpstash } = require('./helpers/fake-upstash');
 
 const scan = { schema: 'mozu.roomscan/1', polygon: [{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 1, z: 1 }], fixtures: [] };
 

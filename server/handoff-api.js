@@ -23,8 +23,10 @@ const {
   normaliseCode,
 } = require('./handoff-store');
 
+const { sendJson, originOf, clientIp, readBody } = require('./http');
+const { createRateLimiter, numberFrom, unavailable } = require('./rate-limit');
+
 const SDK_FILE = path.join(__dirname, '..', 'packages', 'scan-sdk', 'dist', 'mozu-scan-sdk.js');
-const RATE_WINDOW_MS = 10 * 60 * 1000;
 
 // ── scan validation ────────────────────────────────────────────────────────
 
@@ -56,59 +58,6 @@ async function parseScan(raw) {
   return scan;
 }
 
-// ── HTTP helpers ───────────────────────────────────────────────────────────
-
-function sendJson(res, status, body, headers = {}) {
-  const text = JSON.stringify(body);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(text),
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-    ...headers,
-  });
-  res.end(text);
-}
-
-const firstHeader = (v) => String(v || '').split(',')[0].trim();
-
-/** Public origin, honouring the proxy in front (Vercel, Cloudflare tunnel). */
-function originOf(req) {
-  const proto = firstHeader(req.headers['x-forwarded-proto']) || (req.socket && req.socket.encrypted ? 'https' : 'http');
-  const host = firstHeader(req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
-  return `${proto}://${host}`;
-}
-
-function clientIp(req) {
-  return firstHeader(req.headers['x-real-ip']) ||
-    firstHeader(req.headers['x-forwarded-for']) ||
-    (req.socket && req.socket.remoteAddress) || 'unknown';
-}
-
-function readBody(req, limit) {
-  return new Promise((resolve, reject) => {
-    const declared = Number(req.headers['content-length']);
-    if (Number.isFinite(declared) && declared > limit) {
-      req.resume(); // discard the body so the client reads the 413 instead of a reset connection
-      reject(Object.assign(new Error('Scan is too large.'), { status: 413 }));
-      return;
-    }
-    let size = 0;
-    const chunks = [];
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > limit) {
-        reject(Object.assign(new Error('Scan is too large.'), { status: 413 }));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
-}
-
 // ── API ────────────────────────────────────────────────────────────────────
 
 /**
@@ -131,27 +80,9 @@ function createHandoffApi(options = {}) {
     return store;
   }
 
-  /** True when this request may go ahead. Fails open: a counter outage never blocks scans. */
-  async function allowed(req, kind) {
-    const limit = limits[kind];
-    if (!limit) return true;
-    try {
-      return (await getStore().hit(`${kind}:${clientIp(req)}`, RATE_WINDOW_MS)) <= limit;
-    } catch (e) {
-      console.error('[mozu] rate limit check failed:', e.message);
-      return true;
-    }
-  }
-
-  function tooMany(res) {
-    return sendJson(res, 429, { error: 'Too many requests from this network. Wait a few minutes and try again.' },
-      { 'retry-after': String(RATE_WINDOW_MS / 1000) });
-  }
-
-  function unavailable(res, e) {
-    console.error('[mozu] store error:', e.message);
-    return sendJson(res, 503, { error: 'MOZU could not reach its storage just now. Try again in a minute.' });
-  }
+  const rate = createRateLimiter(getStore, limits);
+  const allowed = (req, kind) => rate.allowed(kind, clientIp(req));
+  const tooMany = (res) => rate.tooMany(res);
 
   async function post(req, res) {
     if (!(await allowed(req, 'uploads'))) return tooMany(res);
@@ -237,11 +168,6 @@ function scanLinkLocation(pathname, search) {
   const query = new URLSearchParams(search);
   if (match[1]) query.set('code', match[1]);
   return '/' + (query.toString() ? '?' + query : '');
-}
-
-function numberFrom(value, fallback) {
-  const n = Number(value);
-  return value !== undefined && value !== '' && Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 module.exports = { createHandoffApi, scanLinkLocation, parseScan, sendJson, originOf, clientIp, readBody };

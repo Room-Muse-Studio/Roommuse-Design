@@ -19,6 +19,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHandoffApi, scanLinkLocation, sendJson } = require('./handoff-api');
+const { createAppStore } = require('./app-store');
+const { createAuthApi } = require('./auth-api');
 
 const ROOT = path.resolve(__dirname, '..');
 const WEB_DIR = path.join(ROOT, 'apps', 'web');
@@ -53,9 +55,14 @@ function serveFile(res, baseDir, relPath, method) {
   return true;
 }
 
-/** Build the server. `options` go to createHandoffApi (tests pass their own store and limits). */
+/**
+ * Build the server. One store serves the handoff codes, sessions and projects.
+ * Tests pass their own `store`, `verifier` and `limits`.
+ */
 function createServer(options = {}) {
-  const api = createHandoffApi(options);
+  const store = options.store || createAppStore();
+  const api = createHandoffApi({ ...options, store });
+  const auth = createAuthApi({ store, verifier: options.verifier, limits: options.limits });
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -64,6 +71,7 @@ function createServer(options = {}) {
     try {
       if (p === '/api/scan-handoff' || p === '/api/scan-handoff/') return await api.handoff(req, res);
       if (p === '/api/health') return await api.health(req, res);
+      if (p.startsWith('/api/auth/')) return await auth.handle(req, res);
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed.' });
 
       // Links from the iPad: /scan/B7K4M2 (code screen) and /scan?poly=…&scan=… (open on this iPad).
