@@ -5,12 +5,19 @@
 // finishes are editable; the others render as context shells you can walk into).
 
 import SwiftUI
+#if APPCLIP
+import StoreKit
+#endif
 
 struct HouseResultView: View {
     let scans: [RoomScan]
     var onRescan: () -> Void
 
+    #if APPCLIP
+    @State private var showFullApp = false
+    #else
     @State private var showDesign = false
+    #endif
 
     /// Largest room = the primary design room.
     private var primaryIndex: Int {
@@ -32,6 +39,20 @@ struct HouseResultView: View {
                 .padding(.horizontal, 16)
 
             VStack(spacing: 10) {
+                #if APPCLIP
+                Text("Whole-house design needs the full MOZU app. Send rooms one at a time from this clip.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    showFullApp = true
+                } label: {
+                    Label("Get the full MOZU app", systemImage: "house.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                #else
                 Button {
                     showDesign = true
                 } label: {
@@ -40,6 +61,7 @@ struct HouseResultView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                #endif
 
                 Button(action: onRescan) {
                     Label("Rescan", systemImage: "arrow.clockwise")
@@ -50,11 +72,17 @@ struct HouseResultView: View {
             }
             .padding(16)
         }
+        #if APPCLIP
+        .appStoreOverlay(isPresented: $showFullApp) {
+            SKOverlay.AppClipConfiguration(position: .bottom)
+        }
+        #else
         .fullScreenCover(isPresented: $showDesign) {
             let primary = scans[primaryIndex]
             let extras = scans.indices.filter { $0 != primaryIndex }.map { scans[$0] }
             DesignContainerView(scan: primary, extraScans: extras)
         }
+        #endif
     }
 
     private var stats: some View {
