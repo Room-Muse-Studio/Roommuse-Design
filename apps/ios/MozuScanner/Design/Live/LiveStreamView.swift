@@ -6,6 +6,7 @@
 // This is the "rendered-picture quality, real time, on iPad" path: the heavy
 // rendering runs on the Mac's GPU and only pixels come over the wire.
 
+import Combine
 import SwiftUI
 import simd
 
