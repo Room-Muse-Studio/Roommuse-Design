@@ -21,6 +21,7 @@ const path = require('node:path');
 const { createHandoffApi, scanLinkLocation, sendJson } = require('./handoff-api');
 const { createAppStore } = require('./app-store');
 const { createAuthApi } = require('./auth-api');
+const { createProjectApi } = require('./project-api');
 
 const ROOT = path.resolve(__dirname, '..');
 const WEB_DIR = path.join(ROOT, 'apps', 'web');
@@ -63,6 +64,7 @@ function createServer(options = {}) {
   const store = options.store || createAppStore();
   const api = createHandoffApi({ ...options, store });
   const auth = createAuthApi({ store, verifier: options.verifier, limits: options.limits });
+  const projects = createProjectApi({ store, auth, limits: options.limits, maxBytes: options.maxProjectBytes, maxProjects: options.maxProjects });
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -72,6 +74,7 @@ function createServer(options = {}) {
       if (p === '/api/scan-handoff' || p === '/api/scan-handoff/') return await api.handoff(req, res);
       if (p === '/api/health') return await api.health(req, res);
       if (p.startsWith('/api/auth/')) return await auth.handle(req, res);
+      if (p === '/api/projects' || p.startsWith('/api/projects/')) return await projects.handle(req, res);
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed.' });
 
       // Links from the iPad: /scan/B7K4M2 (code screen) and /scan?poly=…&scan=… (open on this iPad).
