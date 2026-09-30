@@ -5,6 +5,8 @@ on:
   pull_request:
 
 jobs:
+  # The handoff server, the prototype page and the scan SDK's built file.
+  # Plain Node, nothing to install.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -14,3 +16,29 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm run build
+
+  # The 3D viewer (apps/configurator) and the scan SDK's source.
+  viewer:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The page and server load packages/scan-sdk/dist, which is committed. If it
+      # doesn't match src/, they silently run old code (this once dropped sockets).
+      - name: Scan SDK build matches its source
+        run: |
+          npm run build -w packages/scan-sdk
+          if ! git diff --exit-code --stat -- packages/scan-sdk/dist; then
+            echo "::error::packages/scan-sdk/dist is out of date. Run 'npm run build -w packages/scan-sdk' and commit the result."
+            exit 1
+          fi
+      - run: npm run typecheck -w packages/scan-sdk
+      - run: npm test -w apps/configurator
+      # Type-checks the viewer too.
+      - run: npm run build -w apps/configurator

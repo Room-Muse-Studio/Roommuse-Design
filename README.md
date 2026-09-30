@@ -13,16 +13,44 @@ phone app ──scan──▶ MOZU web (Vercel) ──6-character code──▶ 
 | `apps/ios/` | The scanning app (Swift, RoomPlan + LiDAR, socket detection) |
 | `apps/web/index.html` | The prototype, one packed file. The only addition is the scan import section at the very end. |
 | `apps/web/scan-import.js` | Turns a room scan into the prototype's room format, and draws doors/sockets in 3D |
-| `packages/scan-sdk/` | The shared `mozu.roomscan/1` format and floorplan engine |
+| `apps/configurator/` | RoomMuse configurator (Next.js + Three.js). For now a read-only 3D viewer for scans; see below |
+| `packages/scan-sdk/` | The shared `mozu.roomscan/1` (one room) and `mozu.homescan/1` (several rooms) formats and floorplan engine |
 | `server/handoff-store.js` | Codes: 6 characters, 24 hours, stored in Redis (production) or memory (laptop) |
 | `server/handoff-api.js` | The handoff API, shared by the laptop server and Vercel |
 | `server/server.js` | Laptop server (`npm start`) |
 | `api/` | The same API as Vercel functions |
 | `vercel.json`, `scripts/build-web.js` | Vercel build and routing |
-| `test/` | `npm test` (also runs on every push, `.github/workflows/test.yml`) |
+| `test/` | `npm test` (also runs on every push, `.github/workflows/test.yml`); the viewer's own tests: `npm run test:viewer` |
 | `samples/kitchen.roomscan.json` | A 4 m × 3 m kitchen with a door and two sockets, for testing |
+| `samples/twobedroom.roomscan.json` | A two-bedroom flat (`mozu.homescan/1`): hallway, L-shaped bedroom, rectangular bedroom |
 
-There are no npm dependencies. Node 20 or newer is needed to run it locally.
+The handoff server and prototype have no npm dependencies. Node 20 or newer is needed to run them locally.
+The viewer in `apps/configurator` does; see below.
+
+## 3D viewer (apps/configurator)
+
+```bash
+cd ~/Projects/mozu-design
+npm install        # once: installs the viewer and links packages/scan-sdk into it
+npm run viewer     # http://localhost:3100
+```
+
+It opens `samples/twobedroom.roomscan.json`. Pick another sample, or open any `mozu.roomscan/1` or
+`mozu.homescan/1` file with **File…**. Rooms render at their real positions; the **Rooms** menu isolates one,
+and **Show ceilings** adds ceilings. Viewer only: no editing yet. It isn't deployed; Vercel skips
+`apps/configurator` (`.vercelignore`).
+
+**Scans from the phone:** type the 6-character code into **Code from the phone**, or open
+`http://localhost:3100/scan/B7K4M2` (or `/?code=B7K4M2`). The viewer fetches it from the handoff API through its own
+`/api/scan-handoff` route, so there are no cross-origin problems. By default that's the laptop server
+(`npm start`, port 3000). To use the Vercel deploy instead, create `apps/configurator/.env.local` with:
+
+```
+MOZU_HANDOFF_URL=https://your-project.vercel.app
+```
+
+and restart `npm run viewer`. The phone's own **Open** link still goes to the prototype; point it at the viewer by
+opening `/scan/<code>` on port 3100 instead.
 
 ---
 
@@ -93,8 +121,7 @@ plug in and press ⌘R again to refresh it.
 ## Scan and send a room
 
 1. On the phone: **Start scan**, walk slowly around the room pointing at every wall, the floor edges, doors,
-   windows and sockets. Tap **Finish room**, then **Use this room**. (Send one room at a time: the multi-room
-   "Build house" screen has no send button.)
+   windows and sockets. Tap **Finish room**, then **Use this room**.
 2. On the floorplan screen, tap **Send to MOZU web**. A 6-character code appears, e.g. `B7K4M2`.
 3. On any computer, open the production address, type the code in the box at the top (upper or lower case,
    dashes and spaces are fine) and click **Load code**. If the kitchen already has cabinets you'll be asked
@@ -105,6 +132,11 @@ plug in and press ⌘R again to refresh it.
    the scan can't see pipes, so mark those positions under **Connections and mobility**.
 
 Codes last 24 hours. If a code has expired, tap **Send to MOZU web** again; you don't need to rescan.
+
+**A whole home:** after each room tap **Scan next room** instead, and **Build house** after the last one. The house
+screen's **Send house to MOZU web** uploads every room as one `mozu.homescan/1` under a single code, with the rooms
+in their real positions. Open that code in the RoomMuse viewer (`apps/configurator`) to see the whole home. The
+prototype page plans one room: given a home it uses its kitchen if it has exactly one, and otherwise explains.
 
 ---
 
@@ -160,8 +192,14 @@ the app's **Advanced → MOZU web address** field. **Reset** there returns to pr
 - **3D markers**: the prototype's 3D room only draws walls, so `scan-import.js` adds its own markers for doors,
   windows and service points. It reaches the scene through the page's React internals; if a future export of the
   prototype renames them, the markers stop appearing but the 2D room plan is unaffected.
-- The SDK's built file (`packages/scan-sdk/dist`) drops `fixtures` when it parses a scan, so both the page
-  and the server read the sockets from the raw JSON instead.
+- The page and the server both parse scans with the built SDK (`packages/scan-sdk/dist`), sockets included.
+  After changing `packages/scan-sdk/src`, rebuild it: `cd packages/scan-sdk && npm ci && npm run build`.
+- Scans may also carry optional `wallIds` (RoomPlan's wall UUIDs, one per polygon edge), `id` on openings,
+  objects and fixtures, and `elevation` (bottom height above the floor) on objects. The schema is still
+  `mozu.roomscan/1`; older scans without these fields load exactly as before.
+- Several rooms travel together as `mozu.homescan/1` (`{ schema, rooms, capturedAt, connections? }`); read one with
+  the SDK's `parseHomeScan`. `connections` records which doors and walls two rooms share (a door between two rooms
+  is scanned once per room); `findConnections(rooms)` works them out from the rooms' geometry.
 
 | Address | What it does |
 |---|---|
