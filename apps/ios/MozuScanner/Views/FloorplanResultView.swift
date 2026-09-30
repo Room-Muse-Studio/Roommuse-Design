@@ -85,7 +85,7 @@ struct FloorplanResultView: View {
                 .disabled(sending)
 
                 if let ticket {
-                    handoffTicket(ticket)
+                    HandoffTicketView(ticket: ticket)
                 }
                 if let sendError {
                     Text(sendError)
@@ -184,26 +184,6 @@ struct FloorplanResultView: View {
 
     /// The code, big enough to read across a room and to photograph.
     @ViewBuilder
-    private func handoffTicket(_ ticket: ScanHandoff.Ticket) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("On your computer, go to \(URL(string: ticket.url)?.host ?? "MOZU") and enter")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(ticket.code)
-                .font(.system(size: 40, weight: .bold, design: .monospaced))
-                .kerning(6)
-                .textSelection(.enabled)
-            Text(ticket.url)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-    }
 
     private var stats: some View {
         HStack(spacing: 8) {

@@ -7,10 +7,17 @@
 import SwiftUI
 
 struct HouseResultView: View {
-    let scans: [RoomScan]
+    /// Every room of the session, wrapped as one home (see `RoomCaptureController.buildHouse`).
+    let home: HomeScan
     var onRescan: () -> Void
 
     @State private var showDesign = false
+    @AppStorage("mozuWebBase") private var webBase = ScanHandoff.defaultWebBase
+    @State private var sending = false
+    @State private var ticket: ScanHandoff.Ticket?
+    @State private var sendError: String?
+
+    private var scans: [RoomScan] { home.rooms }
 
     /// Largest room = the primary design room.
     private var primaryIndex: Int {
@@ -32,21 +39,73 @@ struct HouseResultView: View {
                 .padding(.horizontal, 16)
 
             VStack(spacing: 10) {
+                // The whole house goes up as one mozu.homescan/1, so every room
+                // arrives on the laptop under a single code, in place.
+                Button {
+                    Task { await sendToWeb() }
+                } label: {
+                    Label(
+                        sending ? "Sending…" : "Send house to MOZU web",
+                        systemImage: "arrow.up.forward.app"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(sending)
+
+                if let ticket {
+                    HandoffTicketView(ticket: ticket)
+                }
+                if let sendError {
+                    Text(sendError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 Button {
                     showDesign = true
                 } label: {
                     Label("Design house", systemImage: "house.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-
-                Button(action: onRescan) {
-                    Label("Rescan", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
-                }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+
+                HStack(spacing: 10) {
+                    ShareLink(
+                        item: Handoff.prettyJSON(home),
+                        preview: SharePreview("MOZU home scan")
+                    ) {
+                        Label("Share house", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(action: onRescan) {
+                        Label("Rescan", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .controlSize(.large)
+
+                // Same address as the single-room screen (they share the stored value).
+                DisclosureGroup("Advanced") {
+                    HStack(spacing: 8) {
+                        TextField("MOZU web address", text: $webBase)
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                        if webBase != ScanHandoff.defaultWebBase {
+                            Button("Reset") { webBase = ScanHandoff.defaultWebBase }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.footnote)
             }
             .padding(16)
         }
@@ -54,6 +113,18 @@ struct HouseResultView: View {
             let primary = scans[primaryIndex]
             let extras = scans.indices.filter { $0 != primaryIndex }.map { scans[$0] }
             DesignContainerView(scan: primary, extraScans: extras)
+        }
+    }
+
+    private func sendToWeb() async {
+        sending = true
+        sendError = nil
+        defer { sending = false }
+        do {
+            ticket = try await ScanHandoff.send(home, webBase: webBase)
+        } catch {
+            ticket = nil
+            sendError = error.localizedDescription
         }
     }
 
@@ -74,6 +145,35 @@ struct HouseResultView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Handoff code
+
+/// The six-character code to type on the laptop, after a room or a house is sent.
+/// Shared by the single-room and whole-house screens.
+struct HandoffTicketView: View {
+    let ticket: ScanHandoff.Ticket
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("On your computer, go to \(URL(string: ticket.url)?.host ?? "MOZU") and enter")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(ticket.code)
+                .font(.system(size: 40, weight: .bold, design: .monospaced))
+                .kerning(6)
+                .textSelection(.enabled)
+            Text(ticket.url)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

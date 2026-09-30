@@ -24,7 +24,7 @@ struct ContentView: View {
                     case .done(let scans) where scans.count == 1:
                         FloorplanResultView(scan: scans[0]) { controller.reset() }
                     case .done(let scans) where scans.count > 1:
-                        HouseResultView(scans: scans) { controller.reset() }
+                        HouseResultView(home: controller.house ?? HomeScan(rooms: scans)) { controller.reset() }
                     case .done:
                         // Zero rooms captured (shouldn't happen) — back to scanning.
                         ScanView(controller: controller)

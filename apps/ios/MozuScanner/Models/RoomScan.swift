@@ -31,6 +31,8 @@ struct ScanOpening: Codable, Equatable {
     var height: Double
     /// Bottom of the opening above the floor (0 for doors).
     var sill: Double?
+    /// RoomPlan's identifier for this door/window/opening (UUID string).
+    var id: String? = nil
 }
 
 /// A detected object (furniture / appliance) from the scan.
@@ -43,6 +45,11 @@ struct ScanObject: Codable, Equatable {
     var rotation: Double
     /// Height (millimetres), when RoomPlan reports it — drives the box massing.
     var height: Double? = nil
+    /// Bottom of the object above the floor (millimetres): 0 for a floor unit,
+    /// well above it for a wall cabinet or shelf.
+    var elevation: Double? = nil
+    /// RoomPlan's identifier for this object (UUID string).
+    var id: String? = nil
 }
 
 /// A mechanical/electrical/plumbing point found on a wall — a socket, a switch,
@@ -66,13 +73,25 @@ struct ScanFixture: Codable, Equatable {
     var confidence: Double
     /// Measured outside diameter for pipework (millimetres), when sized.
     var diameterMm: Double? = nil
+    /// Stable identifier (UUID string). RoomPlan has no fixtures, so the app
+    /// assigns one when the fixture is created; moving a fixture keeps it.
+    var id: String? = UUID().uuidString
 }
 
 /// The normalized capture, identical in shape to the SDK's `RoomScan`.
 struct RoomScan: Codable, Equatable {
     var schema: String = "mozu.roomscan/1"
+    /// Stable room identifier. Connections between rooms in a HomeScan refer to it.
+    var id: String?
+    /// Display name, e.g. "Room 2".
+    var name: String?
+    /// Room kind when known, e.g. "kitchen".
+    var type: String?
     /// Ordered, closed floor polygon (millimetres). 3+ vertices.
     var polygon: [Vec2]
+    /// RoomPlan's identifier for each wall, parallel to `polygon`: `wallIds[i]`
+    /// is edge i → i+1. `nil` for an edge no single scanned wall matches.
+    var wallIds: [String?]?
     /// Ceiling height (millimetres).
     var height: Double
     var openings: [ScanOpening]
@@ -86,6 +105,7 @@ struct RoomScan: Codable, Equatable {
 
     init(
         polygon: [Vec2],
+        wallIds: [String?]? = nil,
         height: Double,
         openings: [ScanOpening] = [],
         objects: [ScanObject] = [],
@@ -96,6 +116,7 @@ struct RoomScan: Codable, Equatable {
         capturedAt: String = ISO8601DateFormatter().string(from: Date())
     ) {
         self.polygon = polygon
+        self.wallIds = wallIds
         self.height = height
         self.openings = openings
         self.objects = objects
@@ -107,6 +128,39 @@ struct RoomScan: Codable, Equatable {
     }
 
     /// Compact JSON (matches `serializeScan` in the SDK).
+    func jsonData() -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return try? encoder.encode(self)
+    }
+}
+
+/// Several rooms scanned in one session — the Swift mirror of @mozu/scan-sdk's
+/// `mozu.homescan/1`. Every room is a complete `RoomScan`, and because the AR
+/// session stays alive between rooms, all their polygons share one coordinate
+/// space: the rooms land at their real positions relative to each other.
+///
+/// Which doors and walls two rooms share (`connections` in the SDK) isn't sent:
+/// the web side works that out from the geometry (`findConnections`).
+struct HomeScan: Codable, Equatable {
+    var schema: String = "mozu.homescan/1"
+    var rooms: [RoomScan]
+    var capturedAt: String
+
+    /// Wrap the rooms of one session. A room without an id or name gets one here
+    /// ("room-2", "Room 2") so the web side can tell the rooms apart; the numbering
+    /// matches the house plan, which labels rooms in scan order.
+    init(rooms: [RoomScan], capturedAt: String = ISO8601DateFormatter().string(from: Date())) {
+        self.rooms = rooms.enumerated().map { index, room in
+            var room = room
+            if room.id?.isEmpty ?? true { room.id = "room-\(index + 1)" }
+            if room.name?.isEmpty ?? true { room.name = "Room \(index + 1)" }
+            return room
+        }
+        self.capturedAt = capturedAt
+    }
+
+    /// Compact JSON, the same shape the SDK's `serializeHomeScan` produces.
     func jsonData() -> Data? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]

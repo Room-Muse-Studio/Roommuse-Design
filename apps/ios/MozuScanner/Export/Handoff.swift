@@ -34,10 +34,15 @@ enum Handoff {
     }
 
     /// Pretty-printed JSON for the share sheet / debugging.
-    static func prettyJSON(_ scan: RoomScan) -> String {
+    static func prettyJSON(_ scan: RoomScan) -> String { pretty(scan) }
+
+    /// Pretty-printed JSON of a whole home, for the share sheet.
+    static func prettyJSON(_ home: HomeScan) -> String { pretty(home) }
+
+    private static func pretty<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        return (try? encoder.encode(scan)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return (try? encoder.encode(value)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 }
 
@@ -89,8 +94,18 @@ enum ScanHandoff {
         }
     }
 
-    /// Upload the scan. Returns the ticket to show the user.
+    /// Upload one room (`mozu.roomscan/1`). Returns the ticket to show the user.
     static func send(_ scan: RoomScan, webBase: String) async throws -> Ticket {
+        try await upload(scan.jsonData(), webBase: webBase)
+    }
+
+    /// Upload every room of a session as one home (`mozu.homescan/1`), so the
+    /// whole house arrives on the web under a single code.
+    static func send(_ home: HomeScan, webBase: String) async throws -> Ticket {
+        try await upload(home.jsonData(), webBase: webBase)
+    }
+
+    private static func upload(_ body: Data?, webBase: String) async throws -> Ticket {
         var base = webBase.trimmingCharacters(in: .whitespaces)
         while base.hasSuffix("/") { base.removeLast() }
         guard let endpoint = URL(string: base + "/api/scan-handoff"), endpoint.host != nil else {
@@ -100,7 +115,7 @@ enum ScanHandoff {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = scan.jsonData()
+        request.httpBody = body
         // A survey happens in a kitchen, which is where the signal is worst;
         // failing fast with a clear message beats a spinner that never resolves.
         request.timeoutInterval = 20

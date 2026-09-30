@@ -51,6 +51,10 @@ final class RoomCaptureController: ObservableObject {
     /// Rooms captured so far in this session (shared world origin).
     private(set) var savedScans: [RoomScan] = []
 
+    /// Every room of this session wrapped as one `mozu.homescan/1`, ready to
+    /// upload. Set by `buildHouse()`; nil until then.
+    @Published private(set) var house: HomeScan?
+
     /// RoomPlan's `RoomCaptureView` spins up ARKit + Metal + the camera pipeline —
     /// the bulk of the launch-to-scan lag — so it is created lazily on the first
     /// `start()` instead of in `init()` (i.e. at app launch). `nil` until then, and
@@ -228,11 +232,14 @@ final class RoomCaptureController: ObservableObject {
         runSession()
     }
 
-    /// From `.roomSaved`: stop here and hand all captured rooms to the result flow.
+    /// From `.roomSaved`: stop here and hand all captured rooms to the result flow,
+    /// gathered into one home so the whole house can be sent to the web at once.
     func buildHouse() {
         stopFixtureSampling()
         captureView?.captureSession.arSession.pause()
-        phase = .done(savedScans)
+        let home = HomeScan(rooms: savedScans)
+        house = home
+        phase = .done(home.rooms)
     }
 
     // MARK: Tap to place
@@ -324,6 +331,7 @@ final class RoomCaptureController: ObservableObject {
         liveTracks = []
         captureView?.captureSession.arSession.pause()   // no-op if never created
         savedScans = []
+        house = nil
         phase = .idle
     }
 
@@ -333,11 +341,15 @@ final class RoomCaptureController: ObservableObject {
                 let room = try await builder.capturedRoom(from: data)
                 // The sockets were measured in world space while walking; this
                 // expresses them against the finished walls.
-                let scan = FloorplanBuilder.roomScan(
+                var scan = FloorplanBuilder.roomScan(
                     from: room,
                     tracks: fixtureCapture.confirmed,
                     sightings: fixtureCapture.sightings
                 )
+                // A stable id per room, so the web side can refer to it (and to
+                // doors it shares with other rooms); named in scan order.
+                scan.id = UUID().uuidString
+                scan.name = "Room \(savedScans.count + 1)"
                 savedScans.append(scan)
                 phase = .roomSaved(count: savedScans.count)
             } catch {

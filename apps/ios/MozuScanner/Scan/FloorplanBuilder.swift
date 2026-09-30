@@ -28,8 +28,8 @@ enum FloorplanBuilder {
         let cleaned = Geo.ensureCCW(Geo.simplify(polygon))
         let height = ceilingHeightMm(room.walls)
         let floorY = floorYMm(room.walls)
-        let openings = mapOpenings(room, to: cleaned)
-        let objects = room.objects.map(scanObject(from:))
+        let openings = mapOpenings(room, to: cleaned, floorYMm: floorY)
+        let objects = room.objects.map { scanObject(from: $0, floorYMm: floorY) }
         let finalPolygon = cleaned.isEmpty ? boundingBox(room.walls) : cleaned
         // Measured tracks when there were any; the ray-cast fallback only for a
         // session that never gave us depth.
@@ -51,13 +51,45 @@ enum FloorplanBuilder {
         }
         return RoomScan(
             polygon: finalPolygon,
+            wallIds: wallIds(for: finalPolygon, walls: room.walls),
             height: height,
             openings: openings,
             objects: objects,
             fixtures: fixtures,
             source: .roomplan,
+            // TODO: derive from RoomPlan's per-surface `confidence` (.low/.medium/.high)
+            // once there is an agreed mapping to 0…1; until then this is a constant.
             confidence: 0.92
         )
+    }
+
+    // MARK: Polygon edges → RoomPlan wall identifiers
+
+    /// How far an edge's midpoint may sit from a scanned wall and still be that wall.
+    static let wallMatchMm = 300.0
+
+    /// RoomPlan's identifier for each edge of the final polygon (`wallIds[i]` is
+    /// edge i → i+1).
+    ///
+    /// The polygon is chained, simplified and possibly reversed from the walls, so
+    /// edge i is not wall i. Each edge takes the roughly parallel wall its midpoint
+    /// lies on; an edge no scanned wall runs along (the bounding-box fallback, say)
+    /// gets nil rather than a guess.
+    private static func wallIds(for polygon: [Vec2], walls: [CapturedRoom.Surface]) -> [String?] {
+        let segments = walls.map { (id: $0.identifier.uuidString, seg: segment($0)) }
+        return polygon.indices.map { i in
+            let a = polygon[i], b = polygon[(i + 1) % polygon.count]
+            let mid = Vec2(x: (a.x + b.x) / 2, z: (a.z + b.z) / 2)
+            let dir = Geo.normalize(Geo.sub(b, a))
+            var best: (id: String, distance: Double)?
+            for s in segments {
+                let along = Geo.normalize(Geo.sub(s.seg.b, s.seg.a))
+                guard abs(dot(dir, along)) > 0.9 else { continue }   // within ~25°
+                let d = distanceToSegment(mid, s.seg.a, s.seg.b)
+                if d <= wallMatchMm, best == nil || d < best!.distance { best = (s.id, d) }
+            }
+            return best?.id
+        }
     }
 
     // MARK: Wall endpoints → ordered loop
@@ -130,7 +162,9 @@ enum FloorplanBuilder {
 
     // MARK: Openings → nearest edge of the ordered polygon
 
-    private static func mapOpenings(_ room: CapturedRoom, to polygon: [Vec2]) -> [ScanOpening] {
+    /// `floorYMm` is the floor plane in ARKit world coordinates (see `floorYMm(_:)`);
+    /// a sill is measured from it, not from the session origin.
+    private static func mapOpenings(_ room: CapturedRoom, to polygon: [Vec2], floorYMm: Double) -> [ScanOpening] {
         guard polygon.count >= 3 else { return [] }
         var result: [ScanOpening] = []
         let tagged: [(ScanOpening.Kind, [CapturedRoom.Surface])] = [
@@ -153,11 +187,12 @@ enum FloorplanBuilder {
                 let offset = max(0, dot(Geo.sub(center, start), dir) - width / 2)
                 let height = Double(s.dimensions.y) * 1000
                 let sill = kind == .window
-                    ? max(0, Double(t.columns.3.y) * 1000 - height / 2)
+                    ? max(0, Double(t.columns.3.y) * 1000 - floorYMm - height / 2)
                     : 0
                 result.append(ScanOpening(
                     type: kind, wall: edge,
-                    offset: offset, width: width, height: height, sill: sill
+                    offset: offset, width: width, height: height, sill: sill,
+                    id: s.identifier.uuidString
                 ))
             }
         }
@@ -184,17 +219,22 @@ enum FloorplanBuilder {
 
     // MARK: Objects
 
-    private static func scanObject(from object: CapturedRoom.Object) -> ScanObject {
+    /// `floorYMm` is the floor plane in ARKit world coordinates; the object's
+    /// transform is at the centre of its box, so its bottom is half its height below.
+    private static func scanObject(from object: CapturedRoom.Object, floorYMm: Double) -> ScanObject {
         let t = object.transform
         let center = mm(SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z))
         let yaw = atan2(Double(t.columns.0.z), Double(t.columns.0.x))
+        let height = Double(object.dimensions.y) * 1000
         return ScanObject(
             category: String(describing: object.category),
             center: center,
             width: Double(object.dimensions.x) * 1000,
             depth: Double(object.dimensions.z) * 1000,
             rotation: yaw,
-            height: Double(object.dimensions.y) * 1000
+            height: height,
+            elevation: max(0, Double(t.columns.3.y) * 1000 - floorYMm - height / 2).rounded(),
+            id: object.identifier.uuidString
         )
     }
 
