@@ -10,7 +10,11 @@
     ".": "./src/index.ts",
     "./dist/*": "./dist/*"
   },
-  "files": ["src", "dist", "README.md"],
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit"
@@ -18,6 +22,7 @@
   "sideEffects": false,
   "license": "UNLICENSED",
   "devDependencies": {
+    "@types/node": "^22.20.4",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.0"
   }

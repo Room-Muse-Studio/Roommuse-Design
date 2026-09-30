@@ -19,31 +19,43 @@ var MozuScan = (() => {
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/index.ts
-  var src_exports = {};
-  __export(src_exports, {
+  var index_exports = {};
+  __export(index_exports, {
+    FIXTURE_GLYPH: () => FIXTURE_GLYPH,
+    FIXTURE_LABEL: () => FIXTURE_LABEL,
+    HOMESCAN_SCHEMA: () => HOMESCAN_SCHEMA,
     MozuScanner: () => MozuScanner,
+    PIPE_DIAMETER_BANDS: () => PIPE_DIAMETER_BANDS,
+    PIPE_TYPES: () => PIPE_TYPES,
     ROOMSCAN_SCHEMA: () => ROOMSCAN_SCHEMA,
     THEMES: () => THEMES,
     add: () => add,
+    apparentWidthToMm: () => apparentWidthToMm,
     bounds: () => bounds,
     buildFloorplan: () => buildFloorplan,
     buildMassing: () => buildMassing,
     captureRotationFrames: () => captureRotationFrames,
     centroid: () => centroid,
+    classifyPipe: () => classifyPipe,
+    describeFixture: () => describeFixture,
     distance: () => distance,
     dot: () => dot,
     ensureCCW: () => ensureCCW,
     estimateRoomFromImages: () => estimateRoomFromImages,
+    findConnections: () => findConnections,
+    fixtureLabel: () => fixtureLabel,
     floorplanCenter: () => floorplanCenter,
     floorplanToSvg: () => floorplanToSvg,
     formatArea: () => formatArea,
     formatLength: () => formatLength,
     formatLengthShort: () => formatLengthShort,
     handoffUrl: () => handoffUrl,
+    isPipe: () => isPipe,
     isWebXrSupported: () => isWebXrSupported,
     length: () => length,
     midpoint: () => midpoint,
     normalize: () => normalize,
+    parseHomeScan: () => parseHomeScan,
     parseScan: () => parseScan,
     perimeter: () => perimeter,
     perpCCW: () => perpCCW,
@@ -54,6 +66,7 @@ var MozuScan = (() => {
     scale: () => scale,
     scanFromParams: () => scanFromParams,
     scanRoomWithWebXR: () => scanRoomWithWebXR,
+    serializeHomeScan: () => serializeHomeScan,
     serializeScan: () => serializeScan,
     signedArea: () => signedArea,
     simplifyPolygon: () => simplifyPolygon,
@@ -62,6 +75,7 @@ var MozuScan = (() => {
 
   // src/types.ts
   var ROOMSCAN_SCHEMA = "mozu.roomscan/1";
+  var HOMESCAN_SCHEMA = "mozu.homescan/1";
 
   // src/geometry.ts
   var sub = (a, b) => ({ x: a.x - b.x, z: a.z - b.z });
@@ -131,8 +145,8 @@ var MozuScan = (() => {
       const next = merged[(i + 1) % n];
       const a = sub(cur, prev);
       const b = sub(next, cur);
-      const cross = Math.abs(a.x * b.z - a.z * b.x);
-      if (cross > straightness) out.push(cur);
+      const cross2 = Math.abs(a.x * b.z - a.z * b.x);
+      if (cross2 > straightness) out.push(cur);
     }
     return out.length >= 3 ? out : merged;
   }
@@ -168,6 +182,81 @@ var MozuScan = (() => {
     return `${(mm2 / MM2_PER_SQM).toFixed(1)} m\xB2`;
   }
 
+  // src/fixtures.ts
+  var FIXTURE_LABEL = {
+    socket: "Socket",
+    switch: "Switch",
+    water: "Water",
+    waste: "Waste",
+    gas: "Gas",
+    vent: "Vent",
+    radiator: "Radiator"
+  };
+  var FIXTURE_GLYPH = {
+    socket: "S",
+    switch: "W",
+    water: "H",
+    waste: "D",
+    gas: "G",
+    vent: "V",
+    radiator: "R"
+  };
+  var PIPE_TYPES = ["water", "waste", "gas"];
+  var isPipe = (type) => PIPE_TYPES.includes(type);
+  var PIPE_DIAMETER_BANDS = {
+    water: { min: 8, max: 30 },
+    gas: { min: 20, max: 36 },
+    waste: { min: 32, max: 130 }
+  };
+  function classifyPipe(diameterMm, cues = {}) {
+    if (diameterMm >= PIPE_DIAMETER_BANDS.waste.min) {
+      const big = diameterMm >= 80;
+      return {
+        type: "waste",
+        confidence: big ? 0.92 : 0.8,
+        reason: `${Math.round(diameterMm)}mm \u2014 too fat for supply, ${big ? "soil stack" : "waste branch"}`
+      };
+    }
+    if (cues.yellowness !== void 0 && cues.yellowness > 0.45) {
+      return {
+        type: "gas",
+        confidence: 0.78,
+        reason: `${Math.round(diameterMm)}mm and yellow \u2014 gas convention`
+      };
+    }
+    if (diameterMm >= PIPE_DIAMETER_BANDS.gas.min && cues.vertical === false && (cues.heightMm ?? 9999) < 400) {
+      return {
+        type: "gas",
+        confidence: 0.6,
+        reason: `${Math.round(diameterMm)}mm running low and horizontal \u2014 likely gas service`
+      };
+    }
+    return {
+      type: "water",
+      confidence: diameterMm <= 30 ? 0.72 : 0.55,
+      reason: `${Math.round(diameterMm)}mm small bore \u2014 supply pipework`
+    };
+  }
+  function apparentWidthToMm(pixels, distanceMm, fovY, imageWidthPx, imageHeightPx) {
+    if (pixels <= 0 || distanceMm <= 0 || imageWidthPx <= 0 || imageHeightPx <= 0) return 0;
+    const aspect = imageWidthPx / imageHeightPx;
+    const tanX = Math.tan(fovY / 2) * aspect;
+    return 2 * distanceMm * tanX * (pixels / imageWidthPx);
+  }
+  function fixtureLabel(fixture) {
+    if (fixture.label) return fixture.label;
+    const base = FIXTURE_LABEL[fixture.type] ?? fixture.type;
+    if (isPipe(fixture.type) && fixture.diameterMm && fixture.diameterMm > 0) {
+      return `${base} \u2300${Math.round(fixture.diameterMm)}`;
+    }
+    return base;
+  }
+  function describeFixture(fixture) {
+    const pct = Math.round(Math.max(0, Math.min(1, fixture.confidence)) * 100);
+    const how = fixture.source === "manual" ? "added by hand" : `${pct}% confident`;
+    return `${fixtureLabel(fixture)} \xB7 ${Math.round(fixture.height)}mm high \xB7 ${how}`;
+  }
+
   // src/floorplan.ts
   function buildFloorplan(input) {
     const unitSystem = input.unitSystem;
@@ -181,7 +270,7 @@ var MozuScan = (() => {
     if (wantSimplify) points = simplifyPolygon(points);
     points = ensureCCW(points);
     const ccw = signedArea(points) > 0;
-    const walls = points.map((start, i) => {
+    const walls2 = points.map((start, i) => {
       const end = points[(i + 1) % points.length];
       const dir = normalize(sub(end, start));
       const outward = ccw ? perpCW(dir) : { x: -perpCW(dir).x, z: -perpCW(dir).z };
@@ -194,12 +283,14 @@ var MozuScan = (() => {
         outward
       };
     });
+    const sourcePolygon = input.polygon.map((p) => ({ x: p.x, z: p.z }));
     const b = bounds(points);
     return {
       points,
-      walls,
-      openings,
+      walls: walls2,
+      openings: remapOpenings(openings, sourcePolygon, walls2),
       objects,
+      fixtures: placeFixtures(input.fixtures ?? [], sourcePolygon, walls2),
       areaMm2: polygonArea(points),
       perimeterMm: perimeter(points),
       height,
@@ -208,6 +299,58 @@ var MozuScan = (() => {
       source,
       confidence
     };
+  }
+  function pointOnEdge(poly, edge, offset) {
+    if (!Number.isInteger(edge) || edge < 0 || edge >= poly.length) return null;
+    const start = poly[edge];
+    const end = poly[(edge + 1) % poly.length];
+    const len = distance(start, end);
+    if (len < 1e-6) return null;
+    const dir = normalize(sub(end, start));
+    return add(start, scale(dir, Math.max(0, Math.min(offset, len))));
+  }
+  function nearestWall(p, walls2) {
+    let best = null;
+    for (const w of walls2) {
+      if (w.length < 1e-6) continue;
+      const dir = normalize(sub(w.end, w.start));
+      const t = Math.max(0, Math.min(w.length, dot2(sub(p, w.start), dir)));
+      const proj = add(w.start, scale(dir, t));
+      const d = distance(p, proj);
+      if (!best || d < best.d) best = { wall: w.index, offset: t, d };
+    }
+    return best ? { wall: best.wall, offset: best.offset } : null;
+  }
+  var dot2 = (a, b) => a.x * b.x + a.z * b.z;
+  function remapOpenings(openings, source, walls2) {
+    const out = [];
+    for (const op of openings) {
+      const mid = pointOnEdge(source, op.wall, op.offset + op.width / 2);
+      if (!mid) continue;
+      const hit = nearestWall(mid, walls2);
+      if (!hit) continue;
+      out.push({ ...op, wall: hit.wall, offset: Math.max(0, hit.offset - op.width / 2) });
+    }
+    return out;
+  }
+  function placeFixtures(fixtures, source, walls2) {
+    const out = [];
+    for (const f of fixtures) {
+      const p = pointOnEdge(source, f.wall, f.offset);
+      if (!p) continue;
+      const hit = nearestWall(p, walls2);
+      if (!hit) continue;
+      const wall = walls2[hit.wall];
+      out.push({
+        ...f,
+        wall: hit.wall,
+        offset: hit.offset,
+        point: p,
+        inward: { x: -wall.outward.x, z: -wall.outward.z },
+        text: fixtureLabel(f)
+      });
+    }
+    return out;
   }
   var floorplanCenter = (fp) => centroid(fp.points);
   function polygonScan(polygon, height, unitSystem, source = "manual", confidence = 0.7) {
@@ -319,7 +462,8 @@ var MozuScan = (() => {
     labelText: "#ffffff",
     area: "#374151",
     object: "#e6e1d8",
-    accent: "#2563eb"
+    accent: "#2563eb",
+    fixture: "#111827"
   };
   var DARK = {
     paper: "#0a0a0a",
@@ -330,7 +474,8 @@ var MozuScan = (() => {
     labelText: "#0a0a0a",
     area: "#d1d5db",
     object: "#2a2a2e",
-    accent: "#22d3ee"
+    accent: "#22d3ee",
+    fixture: "#f9fafb"
   };
   var THEMES = { light: LIGHT, dark: DARK };
   var esc = (s) => s.replace(
@@ -344,6 +489,7 @@ var MozuScan = (() => {
     const showDims = opts.dimensions !== false;
     const showArea = opts.showArea !== false;
     const showObjects = opts.showObjects !== false;
+    const showFixtures = opts.showFixtures !== false;
     const span = Math.max(fp.bounds.width, fp.bounds.depth) || 1e3;
     const pad = opts.padding ?? Math.max(span * 0.18, 700);
     const font = clamp(span / 20, 130, 360);
@@ -381,6 +527,9 @@ var MozuScan = (() => {
       const wall = fp.walls[op.wall];
       if (wall) parts.push(opening(op, wall.start, wall.end, theme, wallW, thin));
     }
+    if (showFixtures && fp.fixtures.length) {
+      for (const f of fp.fixtures) parts.push(fixtureMark(f, theme, { font, thin, wallW }));
+    }
     if (showDims) {
       for (const wall of fp.walls) {
         if (wall.length < 1) continue;
@@ -411,12 +560,12 @@ var MozuScan = (() => {
     const b = add(end, scale(n, s.off));
     const ext = s.off * 0.85;
     const mid = midpoint(a, b);
-    const label = formatLength(len, unit);
-    const halfW = label.length * s.font * 0.31 + s.font * 0.3;
+    const label2 = formatLength(len, unit);
+    const halfW = label2.length * s.font * 0.31 + s.font * 0.3;
     const halfH = s.font * 0.7;
     const startExt = add(start, scale(n, ext));
     const endExt = add(end, scale(n, ext));
-    return `<g stroke="${theme.dimension}" stroke-width="${fmt(s.thin)}" fill="none" stroke-linecap="round"><line x1="${fmt(start.x)}" y1="${fmt(start.z)}" x2="${fmt(startExt.x)}" y2="${fmt(startExt.z)}"/><line x1="${fmt(end.x)}" y1="${fmt(end.z)}" x2="${fmt(endExt.x)}" y2="${fmt(endExt.z)}"/><line x1="${fmt(a.x)}" y1="${fmt(a.z)}" x2="${fmt(b.x)}" y2="${fmt(b.z)}"/></g><rect x="${fmt(mid.x - halfW)}" y="${fmt(mid.z - halfH)}" width="${fmt(halfW * 2)}" height="${fmt(halfH * 2)}" rx="${fmt(halfH * 0.5)}" fill="${theme.label}"/><text x="${fmt(mid.x)}" y="${fmt(mid.z)}" font-size="${fmt(s.font * 0.8)}" font-weight="600" fill="${theme.labelText}" text-anchor="middle" dominant-baseline="central">${esc(label)}</text>`;
+    return `<g stroke="${theme.dimension}" stroke-width="${fmt(s.thin)}" fill="none" stroke-linecap="round"><line x1="${fmt(start.x)}" y1="${fmt(start.z)}" x2="${fmt(startExt.x)}" y2="${fmt(startExt.z)}"/><line x1="${fmt(end.x)}" y1="${fmt(end.z)}" x2="${fmt(endExt.x)}" y2="${fmt(endExt.z)}"/><line x1="${fmt(a.x)}" y1="${fmt(a.z)}" x2="${fmt(b.x)}" y2="${fmt(b.z)}"/></g><rect x="${fmt(mid.x - halfW)}" y="${fmt(mid.z - halfH)}" width="${fmt(halfW * 2)}" height="${fmt(halfH * 2)}" rx="${fmt(halfH * 0.5)}" fill="${theme.label}"/><text x="${fmt(mid.x)}" y="${fmt(mid.z)}" font-size="${fmt(s.font * 0.8)}" font-weight="600" fill="${theme.labelText}" text-anchor="middle" dominant-baseline="central">${esc(label2)}</text>`;
   }
   function opening(op, wallStart, wallEnd, theme, wallW, thin) {
     const dir = normalize(sub(wallEnd, wallStart));
@@ -434,6 +583,17 @@ var MozuScan = (() => {
     const arc = `<path d="M ${fmt(p1.x)} ${fmt(p1.z)} A ${fmt(op.width)} ${fmt(op.width)} 0 0 1 ${fmt(leafEnd.x)} ${fmt(leafEnd.z)}" fill="none" stroke="${theme.dimension}" stroke-width="${fmt(thin)}" stroke-dasharray="${fmt(thin * 3)} ${fmt(thin * 2)}"/>`;
     const leaf = `<line x1="${fmt(hinge.x)}" y1="${fmt(hinge.z)}" x2="${fmt(leafEnd.x)}" y2="${fmt(leafEnd.z)}" stroke="${theme.wall}" stroke-width="${fmt(thin * 1.4)}"/>`;
     return cut + arc + leaf;
+  }
+  function fixtureMark(f, theme, s) {
+    const ink = theme.fixture ?? theme.label;
+    const n = normalize(f.inward);
+    const r = Math.max(s.wallW * 0.62, s.font * 0.34);
+    const c = add(f.point, scale(n, r * 1.15));
+    const detected = f.source === "detected";
+    const labelPos = add(c, scale(n, r * 1.5));
+    const anchor = Math.abs(n.x) > Math.abs(n.z) ? n.x > 0 ? "start" : "end" : "middle";
+    const dy = Math.abs(n.x) > Math.abs(n.z) ? 0 : n.z > 0 ? s.font * 0.5 : -s.font * 0.5;
+    return `<g><line x1="${fmt(f.point.x)}" y1="${fmt(f.point.z)}" x2="${fmt(c.x)}" y2="${fmt(c.z)}" stroke="${ink}" stroke-width="${fmt(s.thin)}"/><circle cx="${fmt(c.x)}" cy="${fmt(c.z)}" r="${fmt(r)}" fill="${detected ? ink : theme.paper}" stroke="${ink}" stroke-width="${fmt(s.thin * 1.2)}"/><text x="${fmt(c.x)}" y="${fmt(c.z)}" font-size="${fmt(r * 1.15)}" font-weight="700" fill="${detected ? theme.paper : ink}" text-anchor="middle" dominant-baseline="central">${esc(FIXTURE_GLYPH[f.type] ?? "?")}</text><text x="${fmt(labelPos.x)}" y="${fmt(labelPos.z + dy)}" font-size="${fmt(s.font * 0.52)}" fill="${ink}" text-anchor="${anchor}" dominant-baseline="central">${esc(f.text)}</text></g>`;
   }
   function resolveTheme(t) {
     if (!t) return LIGHT;
@@ -459,24 +619,112 @@ var MozuScan = (() => {
   function parseScan(input) {
     try {
       const raw = input.trim().startsWith("{") ? input : fromBase64Url(input);
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data.polygon) || data.polygon.length < 3) return null;
-      const polygon = data.polygon.map((p) => ({ x: Number(p.x), z: Number(p.z) })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
-      if (polygon.length < 3) return null;
-      return {
-        schema: ROOMSCAN_SCHEMA,
-        polygon,
-        height: Number(data.height) || 2700,
-        openings: Array.isArray(data.openings) ? data.openings : [],
-        objects: Array.isArray(data.objects) ? data.objects : [],
-        source: data.source ?? "manual",
-        unitSystem: data.unitSystem ?? "metric",
-        confidence: typeof data.confidence === "number" ? data.confidence : 0.8,
-        capturedAt: typeof data.capturedAt === "string" ? data.capturedAt : (/* @__PURE__ */ new Date()).toISOString()
-      };
+      return normaliseRoom(JSON.parse(raw));
     } catch {
       return null;
     }
+  }
+  var label = (v) => typeof v === "string" && v ? v : void 0;
+  function normaliseRoom(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const data = value;
+    if (!Array.isArray(data.polygon) || data.polygon.length < 3) return null;
+    const polygon = data.polygon.map((p) => ({ x: Number(p?.x), z: Number(p?.z) })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
+    if (polygon.length < 3) return null;
+    const wallIds = Array.isArray(data.wallIds) && data.wallIds.length === polygon.length && polygon.length === data.polygon.length ? data.wallIds.map((id2) => typeof id2 === "string" ? id2 : null) : void 0;
+    const id = label(data.id), name = label(data.name), type = label(data.type);
+    return {
+      schema: ROOMSCAN_SCHEMA,
+      ...id ? { id } : {},
+      ...name ? { name } : {},
+      ...type ? { type } : {},
+      polygon,
+      ...wallIds ? { wallIds } : {},
+      height: Number(data.height) || 2700,
+      openings: Array.isArray(data.openings) ? data.openings : [],
+      objects: Array.isArray(data.objects) ? data.objects : [],
+      fixtures: Array.isArray(data.fixtures) ? data.fixtures : [],
+      source: data.source ?? "manual",
+      unitSystem: data.unitSystem ?? "metric",
+      confidence: typeof data.confidence === "number" ? data.confidence : 0.8,
+      capturedAt: typeof data.capturedAt === "string" ? data.capturedAt : (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  function serializeHomeScan(home) {
+    return JSON.stringify(home);
+  }
+  function parseHomeScan(input) {
+    let data;
+    try {
+      const raw = input.trim().startsWith("{") ? input : fromBase64Url(input);
+      data = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    const warnings = [];
+    if (data.schema !== HOMESCAN_SCHEMA) {
+      if (data.schema !== void 0 && data.schema !== ROOMSCAN_SCHEMA) return null;
+      const room = normaliseRoom(data);
+      if (!room) return null;
+      return { home: { schema: HOMESCAN_SCHEMA, rooms: [room], capturedAt: room.capturedAt }, warnings };
+    }
+    const rooms = [];
+    (Array.isArray(data.rooms) ? data.rooms : []).forEach((value, i) => {
+      const room = normaliseRoom(value);
+      if (room) rooms.push(room);
+      else warnings.push(`Room ${i + 1} has no usable outline (it needs at least 3 corners) and was left out.`);
+    });
+    if (!rooms.length) return null;
+    const home = {
+      schema: HOMESCAN_SCHEMA,
+      rooms,
+      capturedAt: typeof data.capturedAt === "string" ? data.capturedAt : rooms[0].capturedAt
+    };
+    if (Array.isArray(data.connections)) {
+      home.connections = checkConnections(data.connections, rooms, warnings);
+    }
+    return { home, warnings };
+  }
+  function checkConnections(values, rooms, warnings) {
+    const byId = /* @__PURE__ */ new Map();
+    for (const room of rooms) if (room.id) byId.set(room.id, byId.has(room.id) ? null : room);
+    for (const [id, room] of byId) if (!room) warnings.push(`Two rooms share the id "${id}", so connections to it were left out.`);
+    const kept = [];
+    const seen = /* @__PURE__ */ new Set();
+    values.forEach((value, i) => {
+      const c = value;
+      const why = connectionProblem(c, byId);
+      if (why) {
+        warnings.push(`Connection ${i + 1} was left out: ${why}.`);
+        return;
+      }
+      const conn = c;
+      const ends = [conn.a, conn.b].map((e) => JSON.stringify([e.room, "opening" in e ? e.opening : e.wall])).sort();
+      const key = conn.type + ends.join("");
+      if (seen.has(key)) return;
+      seen.add(key);
+      kept.push(
+        conn.type === "opening" ? { type: "opening", a: { room: conn.a.room, opening: conn.a.opening }, b: { room: conn.b.room, opening: conn.b.opening } } : { type: "wall", a: { room: conn.a.room, wall: conn.a.wall }, b: { room: conn.b.room, wall: conn.b.wall } }
+      );
+    });
+    return kept;
+  }
+  function connectionProblem(c, byId) {
+    if (!c || typeof c !== "object" || !c.a || !c.b) return "it needs both ends, a and b";
+    if (c.type !== "opening" && c.type !== "wall") return `unknown type "${String(c.type)}"`;
+    const [ra, rb] = [c.a.room, c.b.room].map((id) => typeof id === "string" ? byId.get(id) : void 0);
+    if (!ra || !rb) return "it names a room that is not in this home";
+    if (ra === rb) return "both ends are in the same room";
+    if (c.type === "wall") {
+      const ok = (room, wall) => Number.isInteger(wall) && wall >= 0 && wall < room.polygon.length;
+      return ok(ra, c.a.wall) && ok(rb, c.b.wall) ? null : "it names a wall the room does not have";
+    }
+    const find = (room, id) => room.openings.find((o) => o?.id !== void 0 && o.id === id);
+    const oa = find(ra, c.a.opening), ob = find(rb, c.b.opening);
+    if (!oa || !ob) return "it names an opening the room does not have";
+    if (oa.type !== ob.type) return `one end is a ${oa.type} and the other a ${ob.type}`;
+    return null;
   }
   var polyParam = (polygon) => polygon.map((p) => `${Math.round(p.x)},${Math.round(p.z)}`).join(";");
   function handoffUrl(webBase, scan) {
@@ -485,7 +733,7 @@ var MozuScan = (() => {
     params.set("poly", polyParam(scan.polygon));
     params.set("h", String(Math.round(scan.height)));
     params.set("src", scan.source);
-    if (scan.openings.length || scan.objects.length) {
+    if (scan.openings.length || scan.objects.length || scan.fixtures?.length) {
       params.set("scan", toBase64Url(serializeScan(scan)));
     }
     return `${base}/scan?${params.toString()}`;
@@ -541,6 +789,75 @@ var MozuScan = (() => {
       };
     }
     return null;
+  }
+
+  // src/links.ts
+  var sub2 = (a, b) => ({ x: a.x - b.x, z: a.z - b.z });
+  var dot3 = (a, b) => a.x * b.x + a.z * b.z;
+  var cross = (a, b) => a.x * b.z - a.z * b.x;
+  var along = (w, t) => ({ x: w.start.x + w.dir.x * t, z: w.start.z + w.dir.z * t });
+  function walls(polygon) {
+    let area2 = 0;
+    for (let i = 0; i < polygon.length; i++) area2 += cross(polygon[i], polygon[(i + 1) % polygon.length]);
+    const turn = area2 >= 0 ? 1 : -1;
+    return polygon.map((start, index) => {
+      const d = sub2(polygon[(index + 1) % polygon.length], start);
+      const length2 = Math.hypot(d.x, d.z);
+      const dir = length2 > 0 ? { x: d.x / length2, z: d.z / length2 } : { x: 1, z: 0 };
+      return { index, start, length: length2, dir, inward: { x: -dir.z * turn, z: dir.x * turn } };
+    });
+  }
+  function spanOn(axis, w, o) {
+    const a = dot3(sub2(along(w, o.offset), axis.start), axis.dir);
+    const b = dot3(sub2(along(w, o.offset + o.width), axis.start), axis.dir);
+    return a < b ? [a, b] : [b, a];
+  }
+  var overlap = (a, b) => Math.min(a[1], b[1]) - Math.max(a[0], b[0]);
+  function findConnections(rooms, options = {}) {
+    const maxGap = options.maxGapMm ?? 300;
+    const minOverlap = options.minOverlapMm ?? 100;
+    const maxSin = Math.sin((options.maxAngleDeg ?? 3) * Math.PI / 180);
+    const minOpening = options.minOpeningOverlap ?? 0.5;
+    const named = rooms.filter((r) => r.id);
+    const wallsOf = new Map(named.map((r) => [r, walls(r.polygon)]));
+    const out = [];
+    const usedOpenings = /* @__PURE__ */ new Set();
+    for (let i = 0; i < named.length; i++) {
+      for (let j = i + 1; j < named.length; j++) {
+        const A = named[i], B = named[j];
+        for (const wa of wallsOf.get(A)) {
+          if (wa.length < 1) continue;
+          for (const wb of wallsOf.get(B)) {
+            if (wb.length < 1) continue;
+            if (Math.abs(cross(wa.dir, wb.dir)) > maxSin) continue;
+            if (dot3(wa.inward, wb.inward) > -0.9) continue;
+            const behind = -dot3(sub2(wb.start, wa.start), wa.inward);
+            if (behind < -20 || behind > maxGap) continue;
+            const tb = [dot3(sub2(wb.start, wa.start), wa.dir), dot3(sub2(along(wb, wb.length), wa.start), wa.dir)];
+            const shared = overlap([0, wa.length], tb[0] < tb[1] ? tb : [tb[1], tb[0]]);
+            if (shared < minOverlap) continue;
+            out.push({ type: "wall", a: { room: A.id, wall: wa.index }, b: { room: B.id, wall: wb.index } });
+            for (const oa of A.openings.filter((o) => o.wall === wa.index && o.id)) {
+              const key = `${A.id} ${oa.id}`;
+              if (usedOpenings.has(key)) continue;
+              const sa = spanOn(wa, wa, oa);
+              let best = null;
+              for (const ob of B.openings.filter((o) => o.wall === wb.index && o.id && o.type === oa.type)) {
+                if (usedOpenings.has(`${B.id} ${ob.id}`)) continue;
+                const sb = spanOn(wa, wb, ob);
+                const share = overlap(sa, sb) / Math.max(1, Math.min(oa.width, ob.width));
+                if (share >= minOpening && (!best || share > best.share)) best = { o: ob, share };
+              }
+              if (!best) continue;
+              usedOpenings.add(key);
+              usedOpenings.add(`${B.id} ${best.o.id}`);
+              out.push({ type: "opening", a: { room: A.id, opening: oa.id }, b: { room: B.id, opening: best.o.id } });
+            }
+          }
+        }
+      }
+    }
+    return out;
   }
 
   // src/webxr.ts
@@ -770,5 +1087,5 @@ var MozuScan = (() => {
       return handoffUrl(this.opts.webBase, scan);
     }
   };
-  return __toCommonJS(src_exports);
+  return __toCommonJS(index_exports);
 })();

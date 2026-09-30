@@ -14,6 +14,9 @@
 /** Schema tag stamped onto serialized scans for forward-compatibility. */
 export const ROOMSCAN_SCHEMA = 'mozu.roomscan/1' as const;
 
+/** Schema tag for several rooms captured together (see {@link HomeScan}). */
+export const HOMESCAN_SCHEMA = 'mozu.homescan/1' as const;
+
 export type Millimeters = number;
 
 /** Imperial is a display concern only; storage is always millimetres. */
@@ -39,6 +42,8 @@ export interface ScanOpening {
   height: Millimeters;
   /** Bottom of the opening above the floor (0 for doors). */
   sill?: Millimeters;
+  /** RoomPlan's identifier for this door/window/opening (UUID string), when known. */
+  id?: string;
 }
 
 /**
@@ -76,6 +81,11 @@ export interface ScanFixture {
   diameterMm?: Millimeters;
   /** Optional override for the generated display label. */
   label?: string;
+  /**
+   * Stable identifier (UUID string). RoomPlan has no fixtures, so the capturing
+   * app assigns one when the fixture is created; moving a fixture keeps it.
+   */
+  id?: string;
 }
 
 /** An object detected by a scanner that returns furniture (e.g. RoomPlan). */
@@ -89,6 +99,13 @@ export interface ScanObject {
   rotation: number;
   /** Height of the object (millimetres), when the sensor reports it. */
   height?: Millimeters;
+  /**
+   * Bottom of the object above the floor (millimetres): 0 for a floor unit,
+   * well above it for a wall cabinet or shelf.
+   */
+  elevation?: Millimeters;
+  /** RoomPlan's identifier for this object (UUID string), when known. */
+  id?: string;
 }
 
 /**
@@ -97,8 +114,19 @@ export interface ScanObject {
  */
 export interface RoomScan {
   schema: typeof ROOMSCAN_SCHEMA;
+  /** Stable room identifier, e.g. RoomPlan's CapturedRoom identifier. Optional. */
+  id?: string;
+  /** Display name, e.g. "Bedroom A". Optional. */
+  name?: string;
+  /** Room kind when known, e.g. "bedroom" (iOS 17 RoomPlan sections carry one). Optional. */
+  type?: string;
   /** Ordered, closed floor polygon (millimetres). Requires 3+ vertices. */
   polygon: Vec2[];
+  /**
+   * RoomPlan's identifier for each wall, parallel to `polygon`: `wallIds[i]` is
+   * edge i → i+1. `null` for an edge no single scanned wall matches. Optional.
+   */
+  wallIds?: (string | null)[];
   /** Ceiling height (millimetres). */
   height: Millimeters;
   openings: ScanOpening[];
@@ -115,6 +143,54 @@ export interface RoomScan {
   confidence: number;
   capturedAt: string;
 }
+
+/**
+ * Several rooms scanned in one session. Every room is a complete
+ * {@link RoomScan}, and all their polygons share one coordinate space, so the
+ * rooms sit at their real positions relative to each other.
+ */
+export interface HomeScan {
+  schema: typeof HOMESCAN_SCHEMA;
+  rooms: RoomScan[];
+  capturedAt: string;
+  /**
+   * Where two rooms see the same physical thing. Each room is scanned on its
+   * own, so a door between two rooms is captured twice (once per room, with
+   * different ids) and the wall it sits in likewise. These records say which
+   * copies belong together, so an editor that moves one can move the other.
+   * Optional: an older file, or one no linking pass has run on, has none.
+   */
+  connections?: RoomConnection[];
+}
+
+/** One opening, in one room of a {@link HomeScan}. */
+export interface OpeningRef {
+  /** The room's `id`. */
+  room: string;
+  /** The opening's `id` within that room. */
+  opening: string;
+}
+
+/** One wall (polygon edge `wall` → `wall + 1`), in one room of a {@link HomeScan}. */
+export interface WallRef {
+  /** The room's `id`. */
+  room: string;
+  /** Wall index, the same numbering openings and fixtures use. */
+  wall: number;
+}
+
+/**
+ * Two records of the same physical thing, seen from two rooms.
+ *
+ *   - `opening`: one door/window/archway between rooms. Both copies describe
+ *     the same hole in the same wall.
+ *   - `wall`: the two faces of one physical wall. The walls may differ in length
+ *     (one room's wall can run past the other room); they share the stretch
+ *     where they overlap.
+ */
+export type RoomConnection =
+  | { type: 'opening'; a: OpeningRef; b: OpeningRef }
+  | { type: 'wall'; a: WallRef; b: WallRef };
 
 // ── Floorplan (derived view) ────────────────────────────────────────────────
 
