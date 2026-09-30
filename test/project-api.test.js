@@ -153,9 +153,10 @@ test('needs a session, refuses cross-site writes, rate limits saves', async (t) 
   assert.equal((await A('POST', `/api/projects/${p.id}/duplicate/x`, {})).status, 404);
 });
 
-test('Vercel catch-all api/projects/[[...path]].js routes list and item paths', async (t) => {
-  const fn = require('../api/projects/[[...path]].js');
-  const server = http.createServer((req, res) => fn(req, res));
+test('Vercel functions api/projects/index.js and [...path].js share one router', async (t) => {
+  const index = require('../api/projects/index.js');
+  const item = require('../api/projects/[...path].js');
+  const server = http.createServer((req, res) => (new URL(req.url, 'http://x').pathname.replace(/\/$/, '') === '/api/projects' ? index : item)(req, res));
   const { base, close } = await listen(server);
   t.after(close);
   assert.equal((await fetch(base + '/api/projects')).status, 401);
