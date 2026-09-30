@@ -6,3 +6,6 @@ DerivedData/
 build/
 public/
 .vercel/
+.next/
+next-env.d.ts
+*.tsbuildinfo

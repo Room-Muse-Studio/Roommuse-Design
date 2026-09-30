@@ -5,10 +5,16 @@
   "description": "MOZU iPhone/iPad room scanner + web prototype, with the 6-character scan handoff (local Node server or Vercel + Redis).",
   "scripts": {
     "start": "node server/server.js",
-    "test": "node --test",
-    "build": "node scripts/build-web.js"
+    "test": "node --test \"test/**/*.test.js\"",
+    "build": "node scripts/build-web.js",
+    "viewer": "npm run dev -w apps/configurator",
+    "test:viewer": "npm test -w apps/configurator"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "workspaces": [
+    "packages/scan-sdk",
+    "apps/configurator"
+  ]
 }

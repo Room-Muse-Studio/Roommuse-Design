@@ -1,5 +1,6 @@
 # Only the web page, the SDK build, the server code and the API go to Vercel.
 apps/ios
+apps/configurator
 packages/scan-sdk/src
 packages/scan-sdk/node_modules
 public
