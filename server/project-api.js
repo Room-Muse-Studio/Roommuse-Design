@@ -37,6 +37,20 @@ const cleanName = (v, fallback) => {
   return (s || fallback).slice(0, NAME_MAX);
 };
 
+/** Two names are "the same" when they differ only in case or spacing. */
+const nameKey = (name) => cleanName(name, '').toLowerCase();
+
+/** `base`, or `base (2)`, `base (3)`… — the first not in `taken` (a Set of name keys). */
+function uniqueName(base, taken) {
+  const first = cleanName(base, 'Project');
+  if (!taken.has(nameKey(first))) return first;
+  for (let n = 2; ; n++) {
+    const suffix = ` (${n})`;
+    const candidate = first.slice(0, NAME_MAX - suffix.length) + suffix;
+    if (!taken.has(nameKey(candidate))) return candidate;
+  }
+}
+
 const isHome = (scan) => !!scan && scan.schema === HOMESCAN;
 const roomCount = (scan) => (isHome(scan) ? scan.rooms.length : 1);
 
@@ -111,6 +125,23 @@ function createProjectApi(options = {}) {
   const tooBig = (res) => sendJson(res, 413, { error: `This project is too large to save (limit ${sizeLabel(maxBytes)}).` });
   const notFound = (res) => sendJson(res, 404, { error: 'Project not found.' });
   const atLimit = (res) => sendJson(res, 409, { error: `You have reached the limit of ${maxProjects} projects. Delete one to make room.` });
+  const nameTaken = (res, name) => sendJson(res, 409, { error: `You already have a project called “${name}”. Choose another name.` });
+
+  /** Name keys of every project the person owns — names are unique per account. */
+  async function takenNames(uid) {
+    return new Set((await getStore().listProjects(uid, maxProjects)).map((m) => nameKey(m.name)));
+  }
+
+  /**
+   * A typed name must be free (else 409, and null is returned after replying);
+   * an automatic one is made unique with " (2)", " (3)"….
+   */
+  async function chooseName(res, taken, typed, automatic) {
+    const wanted = cleanName(typed, '');
+    if (!wanted) return uniqueName(automatic, taken);
+    if (taken.has(nameKey(wanted))) { nameTaken(res, wanted); return null; }
+    return wanted;
+  }
 
   /** The JSON body as an object; `optional` lets an empty body stand for {}. Replies and returns undefined otherwise. */
   async function body(req, res, { optional = false } = {}) {
@@ -177,10 +208,13 @@ function createProjectApi(options = {}) {
     }
 
     try {
-      if ((await getStore().countProjects(who.uid)) >= maxProjects) return atLimit(res);
+      const taken = await takenNames(who.uid);
+      if (taken.size >= maxProjects) return atLimit(res);
+      const name = await chooseName(res, taken, input.name, input.suggestedName || defaultName(scan));
+      if (!name) return;
       const now = Date.now();
       const meta = await getStore().createProject({
-        id: newId(), ownerId: who.uid, name: cleanName(input.name, defaultName(scan)), rooms: roomCount(scan), source,
+        id: newId(), ownerId: who.uid, name, rooms: roomCount(scan), source,
         createdAt: now, updatedAt: now, rev: 1,
       }, scan);
       console.log(`[mozu] project ${meta.id} created from ${source} for ${who.uid.slice(0, 6)}…`);
@@ -232,7 +266,9 @@ function createProjectApi(options = {}) {
     try {
       const meta = await owned(res, who, pid);
       if (!meta) return;
-      const updated = await getStore().updateMeta(pid, { name: cleanName(input.name, meta.name) }, { touch: true });
+      const name = cleanName(input.name, meta.name);
+      if (nameKey(name) !== nameKey(meta.name) && (await takenNames(who.uid)).has(nameKey(name))) return nameTaken(res, name);
+      const updated = await getStore().updateMeta(pid, { name }, { touch: true });
       if (!updated) return notFound(res);
       return ok(res, 200, { project: publicMeta(updated) }, who);
     } catch (e) { return unavailable(res, e); }
@@ -258,12 +294,15 @@ function createProjectApi(options = {}) {
     try {
       const meta = await owned(res, who, pid);
       if (!meta) return;
-      if ((await getStore().countProjects(who.uid)) >= maxProjects) return atLimit(res);
+      const taken = await takenNames(who.uid);
+      if (taken.size >= maxProjects) return atLimit(res);
+      const name = await chooseName(res, taken, input.name, `${meta.name} (copy)`);
+      if (!name) return;
       const found = await getStore().getProject(pid);
       if (!found) return notFound(res);
       const now = Date.now();
       const copy = await getStore().createProject({
-        id: newId(), ownerId: who.uid, name: cleanName(input.name, `${meta.name} (copy)`), rooms: meta.rooms, source: meta.source,
+        id: newId(), ownerId: who.uid, name, rooms: meta.rooms, source: meta.source,
         createdAt: now, updatedAt: now, rev: 1, thumbnail: meta.thumbnail,
       }, found.scan, found.design);
       return ok(res, 201, { project: publicMeta(copy) }, who);

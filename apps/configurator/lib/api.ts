@@ -73,7 +73,10 @@ export async function api<T = Record<string, unknown>>(
 export const me = () => api<{ user: User }>('GET', '/api/auth/me').then((r) => r.user);
 export const listProjects = () => api<{ projects: ProjectMeta[] }>('GET', '/api/projects').then((r) => r.projects ?? []);
 export const getProject = (id: string) => api<ProjectRecord>('GET', `/api/projects/${encodeURIComponent(id)}`);
-export const createProject = (body: { code: string; name?: string } | { scan: HomeScan | RoomScan; name?: string; source?: string }) =>
+/** `name` must be free in the account (409 otherwise); `suggestedName` is made unique by the server. */
+export const createProject = (
+  body: { code: string; name?: string; suggestedName?: string } | { scan: HomeScan | RoomScan; name?: string; suggestedName?: string; source?: string },
+) =>
   api<{ project: ProjectMeta }>('POST', '/api/projects', body).then((r) => r.project);
 export const renameProject = (id: string, name: string) =>
   api<{ project: ProjectMeta }>('PATCH', `/api/projects/${encodeURIComponent(id)}`, { name }).then((r) => r.project);

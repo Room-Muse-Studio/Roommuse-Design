@@ -136,6 +136,9 @@ the scan codes. Passwords never reach our server, and password-reset / verificat
 - **My projects** (`/projects`) lists them newest first with a name, room count, where the scan came from
   (`code`, `file` or `sample`) and, once the editor has sent one, a small thumbnail (JPEG or WebP, 64 KB at most).
   New / Open / Rename / Duplicate / Delete map onto the routes in the table under *How the pieces fit together*.
+  Names are unique within an account (ignoring case and spacing): a typed name that's already in use is refused
+  (409), while automatic names (from the scan, a sample, or Duplicate) get " (2)", " (3)"… — send `suggestedName`
+  instead of `name` for a default the server may number.
 - Sessions are an opaque id in an `HttpOnly` cookie (`mozu_session`), checked on every request and revocable
   server-side; they last 30 days and renew on use. Writes require same-origin JSON requests (no cross-site
   forms), and per-account rate limits keep a runaway page from filling the store.

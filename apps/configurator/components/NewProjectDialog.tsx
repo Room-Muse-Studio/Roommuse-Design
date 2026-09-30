@@ -76,13 +76,14 @@ export default function NewProjectDialog({ open, onClose, onCreated, onOpen }: P
       if (creating && way === 'code') {
         const c = code.trim().toUpperCase();
         if (!isCode(c)) throw new Error('Type the 6-character code shown in the MOZU Scanner app.');
-        onCreated!(await createProject({ code: c, ...(chosen ? { name: chosen } : {}) }));
+        onCreated!(await createProject({ code: c, ...(chosen ? { name: chosen } : { suggestedName: `Scan ${c}` }) }));
       } else {
         const { text, origin } = await fetchScan();
         const home = loadHome(text); // validates: a bad file throws a readable message
         if (creating) {
           const scan = JSON.parse(text) as HomeScan | RoomScan;
-          onCreated!(await createProject({ scan, name: chosen || defaultProjectName(origin, home.rooms.map((r) => r.name)), source: sourceOf(origin) }));
+          const naming = chosen ? { name: chosen } : { suggestedName: defaultProjectName(origin, home.rooms.map((r) => r.name)) };
+          onCreated!(await createProject({ scan, ...naming, source: sourceOf(origin) }));
         } else onOpen?.(text, origin);
       }
       setCode('');

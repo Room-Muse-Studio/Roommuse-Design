@@ -136,7 +136,8 @@ for (const [name, makeStore] of [
 
     const dup = await A('POST', `/api/projects/${p.id}/duplicate`, {});
     assert.equal(dup.status, 201);
-    assert.equal(dup.body.project.name, 'x'.repeat(120).slice(0, 120));
+    // "…(copy)" doesn't fit in 120 characters, so the copy would repeat the name: it gets a number instead.
+    assert.equal(dup.body.project.name, 'x'.repeat(116) + ' (2)');
     assert.equal(dup.body.project.source, 'code');
     assert.equal(dup.body.project.rev, 1);
     const dupOpened = (await A('GET', `/api/projects/${dup.body.project.id}`)).body;
@@ -178,7 +179,8 @@ test('a project from a scan file or a sample, and from a whole home', async (t) 
   assert.equal(openedHome.scan.schema, 'mozu.homescan/1');
   assert.deepEqual(openedHome.scan.rooms.map((r) => r.name), ['Hallway', 'Bedroom A', 'Bedroom B']);
 
-  assert.equal((await A('POST', '/api/projects', { scan: JSON.parse(SAMPLE) })).body.project.name, 'Room', 'the sample itself has no name');
+  // The kitchen sample has no name of its own; "Room" is already taken by the file project above.
+  assert.equal((await A('POST', '/api/projects', { scan: JSON.parse(SAMPLE) })).body.project.name, 'Room (2)');
 });
 
 test('creating: bad codes, expired codes, bad scans, bare bodies, limits', async (t) => {
@@ -320,4 +322,32 @@ test('Vercel functions api/projects/index.js and [...path].js share one router',
   assert.equal((await fetch(base + '/api/projects')).status, 401);
   assert.equal((await fetch(base + '/api/projects/abcdefgh12')).status, 401);
   assert.equal((await fetch(base + '/api/projects/abcdefgh12/thumbnail', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
+});
+
+test('project names are unique within an account: typed duplicates are refused, automatic ones get a number', async (t) => {
+  const { A, B, phone } = await setup(t);
+  const code = await phone(NAMED); // the scan calls itself "Kitchen"
+
+  const first = await A('POST', '/api/projects', { code });
+  assert.equal(first.body.project.name, 'Kitchen');
+  assert.equal((await A('POST', '/api/projects', { code })).body.project.name, 'Kitchen (2)', 'automatic names are numbered');
+  assert.equal((await A('POST', '/api/projects', { code })).body.project.name, 'Kitchen (3)');
+
+  const clash = await A('POST', '/api/projects', { code, name: '  kitchen ' });
+  assert.equal(clash.status, 409, 'a typed name that only differs in case or spacing is a duplicate');
+  assert.match(clash.body.error, /already have a project called “kitchen”/);
+
+  const suggested = await A('POST', '/api/projects', { scan: JSON.parse(HOME), suggestedName: 'Two-bedroom', source: 'sample' });
+  assert.equal(suggested.body.project.name, 'Two-bedroom');
+  assert.equal((await A('POST', '/api/projects', { scan: JSON.parse(HOME), suggestedName: 'Two-bedroom' })).body.project.name, 'Two-bedroom (2)');
+
+  const p = first.body.project;
+  assert.equal((await A('PATCH', `/api/projects/${p.id}`, { name: 'KITCHEN (2)' })).status, 409, 'renaming onto another project is refused');
+  assert.equal((await A('PATCH', `/api/projects/${p.id}`, { name: 'KITCHEN' })).status, 200, 'changing only the case of its own name is fine');
+
+  assert.equal((await A('POST', `/api/projects/${p.id}/duplicate`, {})).body.project.name, 'KITCHEN (copy)');
+  assert.equal((await A('POST', `/api/projects/${p.id}/duplicate`, {})).body.project.name, 'KITCHEN (copy) (2)');
+  assert.equal((await A('POST', `/api/projects/${p.id}/duplicate`, { name: 'Kitchen (3)' })).status, 409);
+
+  assert.equal((await B('POST', '/api/projects', { code, name: 'Kitchen' })).status, 201, 'names are per account');
 });

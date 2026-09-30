@@ -727,11 +727,11 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     }
     setBusy('Saving to your projects…');
     try {
-      const byScan = () => createProject({ scan: guestScan, name, source: sourceOf(origin) });
+      const byScan = () => createProject({ scan: guestScan, suggestedName: name, source: sourceOf(origin) });
       let project;
       if (origin.kind === 'code') {
         // The code may have expired since the scan was opened: the scan in hand is the same one.
-        project = await createProject({ code: origin.code, name }).catch((e: ApiError) => (e.status === 404 ? byScan() : Promise.reject(e)));
+        project = await createProject({ code: origin.code, suggestedName: name }).catch((e: ApiError) => (e.status === 404 ? byScan() : Promise.reject(e)));
       } else project = await byScan();
       await api('PUT', `/api/projects/${encodeURIComponent(project.id)}`, { rev: project.rev, design: { items } });
       window.location.replace(`/editor?project=${encodeURIComponent(project.id)}`);
