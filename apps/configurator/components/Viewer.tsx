@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { scanFromParams, type Vec2 } from '@mozu/scan-sdk';
+import { scanFromParams, type HomeScan, type RoomScan, type Vec2 } from '@mozu/scan-sdk';
 import { loadHome, type ViewerHome } from '@/lib/home';
 import { buildHome, setVisible, type RoomView } from '@/lib/scene';
 import {
@@ -14,18 +14,37 @@ import {
 import { buildItem, positionItem } from '@/lib/itemMesh';
 import { containsPoint } from '@/lib/walls';
 import type { Finish } from '@/lib/finishes';
-import ItemPanel from './ItemPanel';
+import { api, ApiError, createProject, fetchScanByCode, renameProject, type ProjectRecord } from '@/lib/api';
+import { captureThumbnail } from '@/lib/capture';
+import { bbox } from '@/lib/dimensions';
+import { stashGuestWork, takeGuestStash } from '@/lib/guestStash';
+import { canRedo, canUndo, emptyHistory, record, redo, undo, type History } from '@/lib/history';
+import { DEFAULT_SAMPLE, type OpenRequest } from '@/lib/openRequest';
+import { defaultProjectName, sourceOf, statusText, subtitleText, type Origin, type SyncState } from '@/lib/status';
+import BottomToolbar, { type ViewMode } from './BottomToolbar';
+import ItemDrawer, { RAIL_SECTIONS } from './ItemDrawer';
 import ItemToolbar from './ItemToolbar';
-import { useDesignSync } from './useDesignSync';
+import NewProjectDialog from './NewProjectDialog';
+import Rail from './Rail';
+import SpacesPopover, { ALL_ROOMS as ALL } from './SpacesPopover';
+import SummaryCard from './SummaryCard';
+import Toast from './Toast';
+import TopBar from './TopBar';
+import { useAuth } from './useAuth';
+import { useProjectSync } from './useProjectSync';
 
-const ALL = 'all';
 const ACCENT = 0xc33a20, BLOCKED = 0x8a8f94, SWAP = 0x2f6fd6;
 
 interface Stage {
   renderer: THREE.WebGLRenderer;
   labels: CSS2DRenderer;
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  persp: THREE.PerspectiveCamera;
+  ortho: THREE.OrthographicCamera;
+  /** The camera in use: perspective in 3D, top-down orthographic in 2D. */
+  camera: THREE.Camera;
+  /** Half the height the orthographic camera shows, in metres (kept for resizes). */
+  orthoHalf: number;
   controls: OrbitControls;
   home?: { views: RoomView[]; dispose: () => void };
   /** Outline around the selected item, and the item the edit menu floats over. */
@@ -47,45 +66,84 @@ function clearItems(group: THREE.Group) {
   group.clear();
 }
 
-/** Point the camera at everything visible, from above and to one side. */
+/** Point the camera at everything visible: from above and to one side in 3D, straight down in 2D. */
 function frame(stage: Stage) {
   const box = new THREE.Box3();
   for (const v of stage.home?.views ?? []) if (v.group.visible) box.expandByObject(v.group);
   if (box.isEmpty()) return;
   const center = box.getCenter(new THREE.Vector3());
   const radius = box.getBoundingSphere(new THREE.Sphere()).radius;
-  const fov = THREE.MathUtils.degToRad(stage.camera.fov);
-  const distance = (radius / Math.sin(fov / 2)) * 1.05;
-  const direction = new THREE.Vector3(0.35, 1.1, 0.9).normalize();
-  stage.camera.position.copy(center).addScaledVector(direction, distance);
-  stage.camera.near = distance / 100;
-  stage.camera.far = distance * 20;
-  stage.camera.updateProjectionMatrix();
+  if (stage.camera === stage.persp) {
+    const fov = THREE.MathUtils.degToRad(stage.persp.fov);
+    const distance = (radius / Math.sin(fov / 2)) * 1.05;
+    const direction = new THREE.Vector3(0.35, 1.1, 0.9).normalize();
+    stage.persp.position.copy(center).addScaledVector(direction, distance);
+    stage.persp.near = distance / 100;
+    stage.persp.far = distance * 20;
+    stage.persp.updateProjectionMatrix();
+  } else {
+    const distance = radius * 3 + 5;
+    stage.ortho.position.set(center.x, center.y + distance, center.z);
+    stage.ortho.near = 0.01;
+    stage.ortho.far = distance * 4;
+    stage.ortho.zoom = 1;
+    stage.orthoHalf = radius * 1.05;
+    fitOrtho(stage);
+  }
   stage.controls.target.copy(center);
   stage.controls.update();
 }
 
-export default function Viewer() {
+/** The orthographic frustum for the canvas's aspect ratio. */
+function fitOrtho(stage: Stage) {
+  const size = stage.renderer.getSize(new THREE.Vector2());
+  const aspect = size.x / Math.max(1, size.y);
+  const half = stage.orthoHalf;
+  stage.ortho.left = -half * aspect;
+  stage.ortho.right = half * aspect;
+  stage.ortho.top = half;
+  stage.ortho.bottom = -half;
+  stage.ortho.updateProjectionMatrix();
+}
+
+const toScan = (home: ViewerHome): HomeScan => ({
+  schema: 'mozu.homescan/1',
+  rooms: home.rooms.map((r) => r.scan),
+  capturedAt: home.rooms[0]?.scan.capturedAt ?? new Date().toISOString(),
+  ...(home.connections.length ? { connections: home.connections } : {}),
+});
+
+export default function Viewer({ request }: { request: OpenRequest }) {
+  const projectId = request.kind === 'project' ? request.id : null;
+  const { user, setUser } = useAuth();
   const mountRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Stage | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [home, setHome] = useState<ViewerHome | null>(null);
-  const [source, setSource] = useState('');
-  const [samples, setSamples] = useState<string[]>([]);
+  const [origin, setOrigin] = useState<Origin | null>(null);
+  /** The scan as opened, for a guest's "Save to my projects". */
+  const [guestScan, setGuestScan] = useState<HomeScan | RoomScan | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(ALL);
   const [ceilings, setCeilings] = useState(false);
-  const [code, setCode] = useState('');
-  const [loadingCode, setLoadingCode] = useState(false);
+  const [view, setView] = useState<ViewMode>('3d');
+  const [section, setSection] = useState<string | null>('kitchen');
+  const [spacesOpen, setSpacesOpen] = useState(false);
+  const [openDialog, setOpenDialog] = useState(false);
   /** Everything standing in the rooms: the scan's furniture and whatever has been added. */
   const [items, setItems] = useState<Item[]>([]);
   const [picked, setPicked] = useState<number | null>(null);
   const [targetRoom, setTargetRoom] = useState('');
-  const [panelMessage, setPanelMessage] = useState('');
+  const [toast, setToast] = useState('');
   const [toolbarMessage, setToolbarMessage] = useState('');
-  /** The code the open scan came from; its design is saved under it. Null for samples and files. */
-  const [designCode, setDesignCode] = useState<string | null>(null);
+  const [busy, setBusy] = useState('');
   const nextUid = useRef(1);
+  // Items to start from instead of the scan's furniture (a saved design, a guest's stash).
+  const pendingItems = useRef<Item[] | null>(null);
+  // Tell the sync hook the starting items once the next scan is shown.
+  const pendingMark = useRef(false);
+  // A guest's stash restored after sign-in: save it to the account as soon as we're signed in.
+  const autoSave = useRef(false);
 
   // The pointer handlers live as long as the renderer; they read the latest state through these.
   const itemsRef = useRef<Item[]>([]);
@@ -117,7 +175,40 @@ export default function Viewer() {
     setItems((list) => [...list]); // redraw: puts the item back where it was
   };
 
-  // Renderer, camera, controls and pointer handling live for the whole page.
+  /** Show a scan. `starting` are the items to begin with instead of the scan's furniture. */
+  const open = useCallback((text: string, from: Origin, opts: { items?: Item[] | null; project?: boolean } = {}) => {
+    try {
+      const loaded = loadHome(text);
+      pendingItems.current = opts.items ?? null;
+      pendingMark.current = !!opts.project;
+      setHome(loaded);
+      setOrigin(from);
+      setGuestScan(opts.project ? null : (JSON.parse(text) as HomeScan | RoomScan));
+      setError('');
+      if (loaded.warnings.length) setToast(loaded.warnings.join(' '));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  // Project mode: the account holds the scan and the design; keep the design saved.
+  const sync = useProjectSync({
+    projectId,
+    items,
+    onLoad: (rec: ProjectRecord) => {
+      open(JSON.stringify(rec.scan), { kind: 'project', source: rec.project.source }, { items: rec.design?.items ?? null, project: true });
+    },
+    capture: () => {
+      const s = stageRef.current;
+      if (!s?.home) return null;
+      s.renderer.render(s.scene, s.camera);
+      return captureThumbnail(s.renderer.domElement);
+    },
+  });
+  const markLoadedRef = useRef(sync.markLoaded);
+  markLoadedRef.current = sync.markLoaded;
+
+  // Renderer, cameras, controls and pointer handling live for the whole page.
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
@@ -139,19 +230,21 @@ export default function Viewer() {
     grid.position.y = -0.002;
     scene.add(grid);
 
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 500);
-    const controls = new OrbitControls(camera, labels.domElement);
+    const persp = new THREE.PerspectiveCamera(45, 1, 0.05, 500);
+    const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.01, 200);
+    const controls = new OrbitControls(persp, labels.domElement);
     controls.enableDamping = true;
     controls.maxPolarAngle = Math.PI / 2 - 0.02; // stay above the floor
-    const stage: Stage = { renderer, labels, scene, camera, controls };
+    const stage: Stage = { renderer, labels, scene, persp, ortho, camera: persp, orthoHalf: 10, controls };
     stageRef.current = stage;
 
     const resize = () => {
       const w = mount.clientWidth, h = mount.clientHeight;
       renderer.setSize(w, h);
       labels.setSize(w, h);
-      camera.aspect = w / Math.max(1, h);
-      camera.updateProjectionMatrix();
+      persp.aspect = w / Math.max(1, h);
+      persp.updateProjectionMatrix();
+      fitOrtho(stage);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
@@ -166,7 +259,7 @@ export default function Viewer() {
     const ray = new THREE.Raycaster();
     const toRay = (e: PointerEvent) => {
       const rect = surface.getBoundingClientRect();
-      ray.setFromCamera(new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), camera);
+      ray.setFromCamera(new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), stage.camera);
     };
     const itemAt = (e: PointerEvent) => {
       toRay(e);
@@ -303,8 +396,8 @@ export default function Viewer() {
     const tick = () => {
       raf = requestAnimationFrame(tick);
       controls.update();
-      renderer.render(scene, camera);
-      labels.render(scene, camera);
+      renderer.render(scene, stage.camera);
+      labels.render(scene, stage.camera);
       const menu = toolbarRef.current, target = stage.selected;
       if (!menu) return;
       if (!target || !target.parent) {
@@ -312,7 +405,7 @@ export default function Viewer() {
         return;
       }
       bounds.setFromObject(target);
-      top.set((bounds.min.x + bounds.max.x) / 2, bounds.max.y, (bounds.min.z + bounds.max.z) / 2).project(camera);
+      top.set((bounds.min.x + bounds.max.x) / 2, bounds.max.y, (bounds.min.z + bounds.max.z) / 2).project(stage.camera);
       const w = mount.clientWidth, h = mount.clientHeight;
       const x = ((top.x + 1) / 2) * w, y = ((1 - top.y) / 2) * h;
       const mw = menu.offsetWidth, mh = menu.offsetHeight;
@@ -339,7 +432,46 @@ export default function Viewer() {
     };
   }, []);
 
-  // A new scan: rebuild the rooms, and start from the furniture it came with.
+  // ── history: every change to the items can be undone ─────────
+  const hist = useRef<History<Item[]>>(emptyHistory([]));
+  const historyReset = useRef(false);
+  const [, setHistTick] = useState(0);
+  useEffect(() => {
+    if (historyReset.current) {
+      historyReset.current = false;
+      hist.current = emptyHistory(items);
+      setHistTick((t) => t + 1);
+      return;
+    }
+    if (hist.current.present === items) return;
+    const next = record(hist.current, items);
+    if (next !== hist.current) {
+      hist.current = next;
+      setHistTick((t) => t + 1);
+    }
+  }, [items]);
+
+  /** Replace every item (undo, redo, or another version of the design). */
+  const replaceItems = (next: Item[]) => {
+    setItems(next);
+    nextUid.current = Math.max(nextUid.current, ...next.map((i) => i.uid + 1));
+    setPicked((p) => (p !== null && next.some((i) => i.uid === p) ? p : null));
+    setToolbarMessage('');
+  };
+  const undoItems = () => {
+    const h = undo(hist.current);
+    if (!h) return;
+    hist.current = h;
+    replaceItems(h.present);
+  };
+  const redoItems = () => {
+    const h = redo(hist.current);
+    if (!h) return;
+    hist.current = h;
+    replaceItems(h.present);
+  };
+
+  // A new scan: rebuild the rooms, and start from the furniture it came with (or the saved design).
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !home) return;
@@ -349,18 +481,27 @@ export default function Viewer() {
     stage.home = built;
     setSelected(ALL);
     let uid = 1;
-    const scanned = home.rooms.flatMap((r) => {
+    let initial = home.rooms.flatMap((r) => {
       const list = itemsFromScan(r.key, r.scan, uid);
       uid += list.length;
       return list;
     });
+    if (pendingItems.current) {
+      initial = pendingItems.current;
+      pendingItems.current = null;
+      uid = Math.max(1, ...initial.map((i) => i.uid + 1));
+    }
     nextUid.current = uid;
-    setItems(scanned);
+    historyReset.current = true;
+    setItems(initial);
     setPicked(null);
-    setPanelMessage('');
     setTargetRoom(home.rooms[0]?.key ?? '');
     for (const v of built.views) setVisible(v.ceiling, ceilings);
     frame(stage);
+    if (pendingMark.current) {
+      pendingMark.current = false;
+      markLoadedRef.current(initial);
+    }
     // Deliberately keyed on the scan only; `ceilings` has its own effect.
   }, [home]);
 
@@ -379,6 +520,18 @@ export default function Viewer() {
     if (!stage?.home) return;
     for (const v of stage.home.views) setVisible(v.ceiling, ceilings && v.group.visible);
   }, [ceilings]);
+
+  // 2D is the plan from straight above (orthographic); 3D orbits the perspective camera.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    stage.camera = view === '2d' ? stage.ortho : stage.persp;
+    stage.controls.object = stage.camera;
+    stage.controls.enableRotate = view === '3d';
+    stage.controls.minPolarAngle = 0;
+    stage.controls.maxPolarAngle = view === '2d' ? 0 : Math.PI / 2 - 0.02;
+    frame(stage);
+  }, [view]);
 
   // Redraw the items whenever they, or the rooms they stand in, change.
   useEffect(() => {
@@ -413,26 +566,9 @@ export default function Viewer() {
   }, [picked, items]);
 
   const roomOf = (key: string) => home?.rooms.find((r) => r.key === key);
+  const roomName = (key: string) => roomOf(key)?.name ?? key;
   const pickedItem = items.find((i) => i.uid === picked) ?? null;
-
-  // Save the items under the code, and pick up what others save there.
-  const sync = useDesignSync({
-    code: designCode,
-    home,
-    items,
-    replaceItems: (next) => {
-      setItems(next);
-      nextUid.current = Math.max(nextUid.current, ...next.map((i) => i.uid + 1));
-      setPicked((p) => (p !== null && next.some((i) => i.uid === p) ? p : null));
-    },
-    onCode: (newCode) => {
-      setDesignCode(newCode);
-      setCode(newCode);
-      setSource(`code ${newCode}`);
-      window.history.replaceState(null, '', `/?code=${newCode}`);
-    },
-  });
-  const savedTime = sync.savedAt ? new Date(sync.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const editable = request.kind !== 'project' || !sync.readOnly;
 
   const addItem = (specId: string) => {
     const spec = specById(specId);
@@ -440,13 +576,12 @@ export default function Viewer() {
     if (!spec || !room) return;
     const at = freeSpot(room.scan, spec, items.filter((i) => i.roomKey === room.key));
     if (!at) {
-      setPanelMessage(`No free space in ${room.name} for the ${spec.name.toLowerCase()} (${spec.size.width} × ${spec.size.depth} mm).`);
+      setToast(`No free space in ${room.name} for the ${spec.name.toLowerCase()} (${spec.size.width} × ${spec.size.depth} mm).`);
       return;
     }
     const item = itemFromSpec(spec, nextUid.current++, room.key, at);
     setItems((list) => [...list, item]);
     setPicked(item.uid);
-    setPanelMessage('');
     setToolbarMessage('');
     if (selected !== ALL && selected !== room.key) setSelected(room.key);
   };
@@ -454,6 +589,32 @@ export default function Viewer() {
   const removeItem = (uid: number) => {
     setItems((list) => list.filter((i) => i.uid !== uid));
     setPicked((p) => (p === uid ? null : p));
+  };
+
+  /** A copy of the selected item beside it (or wherever it fits). */
+  const duplicateItem = () => {
+    const item = pickedItem, room = item && roomOf(item.roomKey);
+    if (!item || !room) return;
+    const others = items.filter((i) => i.roomKey === room.key);
+    const along = { x: Math.cos(item.rotation), z: Math.sin(item.rotation) }; // the item's width axis
+    let at: { center: Vec2; rotation: number } | null = null;
+    for (const side of [1, -1]) {
+      const step = side * (item.size.width + 20);
+      const c = settle(room.scan, item.size, { x: item.center.x + along.x * step, z: item.center.z + along.z * step }, item.rotation, others, 600);
+      if (c) {
+        at = { center: c, rotation: item.rotation };
+        break;
+      }
+    }
+    at ??= freeSpot(room.scan, { builder: item.builder, size: item.size }, others);
+    if (!at) {
+      setToast(`No free space in ${room.name} for another ${item.name.toLowerCase()}.`);
+      return;
+    }
+    const copy: Item = { ...item, uid: nextUid.current++, center: at.center, rotation: at.rotation };
+    delete copy.fromScan;
+    setItems((list) => [...list, copy]);
+    setPicked(copy.uid);
   };
 
   /** Turn the selected item clockwise (seen from above), settling it nearby if it doesn't fit as it is. */
@@ -480,11 +641,17 @@ export default function Viewer() {
     setItems((list) => list.map((i) => (i.uid === me.uid || (everywhere && sameKind(i)) ? { ...i, finishes: { ...i.finishes, [slot]: finish } } : i)));
   };
 
-  // Delete removes the selected item, R turns it (Shift: 15°), Escape deselects. Not while typing.
+  // Keys: ⌘Z / ⇧⌘Z undo and redo; Delete removes the selected item, R turns it (Shift: 15°), Escape deselects. Not while typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) redoItems();
+        else undoItems();
+        return;
+      }
       if (picked === null) return;
       if (e.key === 'Escape') setPicked(null);
       else if (e.key === 'r' || e.key === 'R') rotateItem(e.shiftKey ? 15 : 90);
@@ -497,202 +664,255 @@ export default function Viewer() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  /** Show a scan. `fromCode` is the code it came from, so its design is loaded and saved there. */
-  const open = (text: string, name: string, fromCode: string | null = null) => {
-    try {
-      setHome(loadHome(text));
-      setSource(name);
-      setDesignCode(fromCode);
-      setError('');
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
   const openSample = async (name: string) => {
     try {
       const res = await fetch(`/samples/${encodeURIComponent(name)}.roomscan.json`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Could not load the sample "${name}" (HTTP ${res.status}).`);
-      open(await res.text(), `samples/${name}.roomscan.json`);
+      open(await res.text(), { kind: 'sample', name });
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
   /** Fetch a scan the phone uploaded, by the 6-character code it showed. */
-  const openCode = async (input: string) => {
-    const wanted = input.trim();
-    if (!wanted) {
-      setError('Type the 6-character code shown in the MOZU Scanner app.');
-      return;
-    }
-    setLoadingCode(true);
+  const openCode = async (code: string) => {
+    setBusy('Fetching the scan from the phone…');
     try {
-      const res = await fetch(`/api/scan-handoff?code=${encodeURIComponent(wanted)}`, { cache: 'no-store' });
-      const body = (await res.json().catch(() => ({}))) as { code?: string; scan?: unknown; error?: string };
-      if (!res.ok || !body.scan) throw new Error(body.error || `The scan service could not find that code (HTTP ${res.status}).`);
-      const found = body.code ?? wanted.toUpperCase();
-      open(JSON.stringify(body.scan), `code ${found}`, found);
-      setCode(found);
+      const found = await fetchScanByCode(code);
+      open(JSON.stringify(found.scan), { kind: 'code', code: found.code });
     } catch (e) {
-      setError(e instanceof TypeError ? 'Could not reach the scan service. Check the connection and try again.' : (e as Error).message);
+      setError((e as Error).message);
     } finally {
-      setLoadingCode(false);
+      setBusy('');
     }
   };
 
+  // What the address asks for (a project loads through the sync hook).
   useEffect(() => {
-    fetch('/samples/index.json', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((body: { samples: string[] }) => setSamples(body.samples))
-      .catch(() => setSamples([]));
-    // What the address asks for (the /scan links redirect here):
-    //   ?code=B7K4M2           a scan sent from the phone, by its code
-    //   ?poly=…&h=…[&scan=…]   the phone's "Open in MOZU on this device" link, the scan in the address
-    // Otherwise, the two-bedroom sample.
-    const params = new URLSearchParams(window.location.search);
-    const linked = params.get('code');
-    if (linked) {
-      setCode(linked.toUpperCase());
-      void openCode(linked);
-    } else if (params.get('scan') || params.get('poly')) {
-      const scan = scanFromParams(params);
-      if (scan) open(JSON.stringify(scan), 'link from the phone');
-      else setError('The link from the phone is damaged and could not be read.');
-    } else {
-      void openSample('twobedroom');
+    switch (request.kind) {
+      case 'project': return;
+      case 'code': void openCode(request.code); return;
+      case 'sample': void openSample(request.name); return;
+      case 'link': {
+        const scan = scanFromParams(request.params);
+        if (scan) open(JSON.stringify(scan), { kind: 'link' });
+        else setError('The link from the phone is damaged and could not be read.');
+        return;
+      }
+      case 'restore': {
+        const stash = takeGuestStash();
+        if (!stash) {
+          void openSample(DEFAULT_SAMPLE);
+          return;
+        }
+        autoSave.current = true;
+        open(JSON.stringify(stash.scan), stash.origin, { items: stash.items });
+        return;
+      }
+      default: void openSample(DEFAULT_SAMPLE);
     }
-  }, []);
+  }, [request]);
+
+  /** A guest's work into the account: sign in first if need be, then a project from the scan and the items. */
+  const saveToProjects = async () => {
+    if (!home || !guestScan || !origin) return;
+    const name = defaultProjectName(origin, home.rooms.map((r) => r.name));
+    if (!user) {
+      if (!stashGuestWork({ scan: guestScan, items, origin, name })) {
+        setToast('The browser would not keep your work while you sign in (storage is blocked).');
+        return;
+      }
+      window.location.assign('/');
+      return;
+    }
+    setBusy('Saving to your projects…');
+    try {
+      const byScan = () => createProject({ scan: guestScan, name, source: sourceOf(origin) });
+      let project;
+      if (origin.kind === 'code') {
+        // The code may have expired since the scan was opened: the scan in hand is the same one.
+        project = await createProject({ code: origin.code, name }).catch((e: ApiError) => (e.status === 404 ? byScan() : Promise.reject(e)));
+      } else project = await byScan();
+      await api('PUT', `/api/projects/${encodeURIComponent(project.id)}`, { rev: project.rev, design: { items } });
+      window.location.replace(`/editor?project=${encodeURIComponent(project.id)}`);
+    } catch (e) {
+      setBusy('');
+      if ((e as ApiError).status === 401) {
+        setUser(null);
+        stashGuestWork({ scan: guestScan, items, origin, name });
+        window.location.assign('/');
+        return;
+      }
+      setToast((e as Error).message);
+    }
+  };
+  // A stash restored after sign-in saves itself once we know who is signed in.
+  useEffect(() => {
+    if (!autoSave.current || user === undefined || !home || !guestScan) return;
+    autoSave.current = false;
+    if (user) void saveToProjects();
+  }, [user, home, guestScan]);
+
+  const signIn = () => {
+    if (home && guestScan && origin) stashGuestWork({ scan: guestScan, items, origin, name: defaultProjectName(origin, home.rooms.map((r) => r.name)) });
+    window.location.assign('/');
+  };
+  const backToProjects = async () => {
+    setBusy('Saving…');
+    await sync.flush();
+    window.location.assign('/projects');
+  };
+
+  // ── what the bars show ─────────────────────────────────────────
+  const isProject = request.kind === 'project';
+  const status: { state: SyncState; text: string } = isProject
+    ? { state: sync.state, text: statusText(sync.state, { savedAt: sync.savedAt, error: sync.error }) }
+    : { state: 'idle', text: home ? statusText('idle', { guest: true }) : '' };
+  const subtitle = subtitleText(home?.rooms.length ?? 0, isProject ? { kind: 'project', source: sync.project?.source } : origin);
+  const scopeRooms = selected === ALL ? home?.rooms ?? [] : home?.rooms.filter((r) => r.key === selected) ?? [];
+  const scopeItems = selected === ALL ? items : items.filter((i) => i.roomKey === selected);
+  const extent = bbox(scopeRooms.map((r) => r.scan.polygon));
+  const scopeTitle = !home ? '' : selected === ALL ? (home.rooms.length === 1 ? home.rooms[0].name : 'Whole home') : roomName(selected);
+  const railSection = RAIL_SECTIONS.find((s) => s.id === section) ?? null;
+  const loadFailed = isProject && sync.loadError;
 
   return (
-    <main className="viewer">
-      <div ref={mountRef} className="stage" />
-      <section className="panel" aria-label="Viewer controls">
-        <h1>RoomMuse viewer</h1>
-        <p className="source">{source || 'No scan loaded'}</p>
-
-        <label className="field">
-          Rooms
-          <select value={selected} onChange={(e) => setSelected(e.target.value)} disabled={!home}>
-            <option value={ALL}>All rooms ({home?.rooms.length ?? 0})</option>
-            {home?.rooms.map((r) => (
-              <option key={r.key} value={r.key}>{r.name}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="check">
-          <input type="checkbox" checked={ceilings} onChange={(e) => setCeilings(e.target.checked)} />
-          Show ceilings
-        </label>
-
-        <form
-          className="field"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void openCode(code);
-          }}
-        >
-          Code from the phone
-          <div className="row">
-            <input
-              className="code"
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="B7K4M2"
-              maxLength={9}
-              autoComplete="off"
-              spellCheck={false}
-              aria-label="6-character code from the MOZU Scanner app"
-            />
-            <button type="submit" disabled={loadingCode}>{loadingCode ? 'Loading…' : 'Load'}</button>
-          </div>
-        </form>
-
-        <div className="field">
-          Or open a scan
-          <div className="row">
-            <select defaultValue="" onChange={(e) => e.target.value && void openSample(e.target.value)}>
-              <option value="">Sample…</option>
-              {samples.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <label className="file">
-              File…
-              <input
-                type="file"
-                accept=".json,application/json"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) open(await file.text(), file.name);
-                  e.target.value = '';
-                }}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="save-status" aria-live="polite">
-          {designCode ? (
-            <>
-              <strong>
-                {sync.status === 'loading' ? 'Loading the saved design…'
-                  : sync.status === 'saving' ? 'Saving…'
-                  : sync.status === 'error' ? 'Not saved'
-                  : savedTime ? `Saved · ${savedTime}` : 'Saved'}
-              </strong>
-              {sync.status === 'error' ? <span className="error">{sync.error} Your next change tries again.</span>
-                : <span>Anyone with code {designCode} can open and edit this design. It&apos;s kept for good.</span>}
-              {sync.notice && sync.status !== 'error' && <span className="notice-inline">{sync.notice}</span>}
-            </>
-          ) : home ? (
-            <>
-              <strong>Not saved</strong>
-              <span>Changes to a sample or file stay in this tab.</span>
-              <button type="button" className="secondary" onClick={() => void sync.saveAndGetCode()} disabled={sync.status === 'saving'}>
-                {sync.status === 'saving' ? 'Saving…' : 'Save & get a code'}
-              </button>
-              {sync.status === 'error' && <span className="error">{sync.error}</span>}
-            </>
-          ) : null}
-        </div>
-
-        {error && <p className="error" role="alert">{error}</p>}
-        {home?.warnings.map((w) => <p key={w} className="warning">{w}</p>)}
-
-        <ul className="legend">
-          <li><i style={{ background: '#2f7d63' }} />Door</li>
-          <li><i style={{ background: '#3d7fc1' }} />Window</li>
-          <li><i style={{ background: '#8a8f94' }} />Archway</li>
-          <li><i style={{ background: '#d09e16' }} />Socket</li>
-          <li><i style={{ background: '#b46a14' }} />Switch</li>
-        </ul>
-        <p className="hint">Drag to orbit · scroll to zoom · right-drag to pan</p>
-      </section>
-
-      <ItemPanel
-        rooms={home?.rooms.map((r) => ({ key: r.key, name: r.name })) ?? []}
-        targetRoom={targetRoom}
-        onTargetRoom={setTargetRoom}
-        onAdd={addItem}
-        items={items}
-        selected={picked}
-        onSelect={(uid) => { setPicked(uid); setToolbarMessage(''); }}
-        onRemove={removeItem}
-        message={panelMessage}
+    <div className="app">
+      <TopBar
+        projectName={isProject ? sync.project?.name ?? '' : null}
+        onRename={async (name) => {
+          if (!sync.project) return;
+          sync.setProject(await renameProject(sync.project.id, name));
+        }}
+        subtitle={subtitle}
+        status={status}
+        user={user}
+        guest={!isProject}
+        onBack={() => void backToProjects()}
+        onSaveToProjects={() => void saveToProjects()}
+        onSignIn={signIn}
+        beforeSignOut={sync.flush}
+        onSignedOut={() => window.location.replace('/')}
+        onNotice={setToast}
       />
 
-      {pickedItem && (
-        <ItemToolbar
-          ref={toolbarRef}
-          item={pickedItem}
-          roomName={roomOf(pickedItem.roomKey)?.name ?? ''}
-          message={toolbarMessage}
-          onRotate={rotateItem}
-          onFinish={setFinish}
-          onRemove={() => removeItem(pickedItem.uid)}
-          onClose={() => setPicked(null)}
-        />
+      {sync.conflict && (
+        <div className="bar conflict" role="alertdialog" aria-label="This project was changed somewhere else">
+          <span>This project was changed somewhere else. Which version do you want to keep?</span>
+          <button type="button" className="btn primary small" onClick={() => void sync.reloadTheirs()}>Reload their version</button>
+          <button type="button" className="btn ghost small" onClick={sync.keepMine}>Keep mine</button>
+        </div>
       )}
-    </main>
+      {isProject && sync.state === 'signedout' && !loadFailed && (
+        <div className="bar warn" role="alert">
+          <span>You were signed out. Sign in again to keep saving; your latest changes are kept in this tab.</span>
+          <a className="btn ghost small" href="/" target="_blank" rel="noopener">Sign in</a>
+          <button type="button" className="btn ghost small" onClick={sync.retry}>Try again</button>
+        </div>
+      )}
+      {isProject && sync.state === 'error' && sync.readOnly && (
+        <div className="bar warn" role="alert"><span>{sync.error}</span></div>
+      )}
+
+      <div className="body">
+        <Rail sections={RAIL_SECTIONS} active={section} onPick={(id) => setSection((s) => (s === id ? null : id))} />
+        {railSection && (
+          <ItemDrawer
+            section={railSection}
+            rooms={home?.rooms.map((r) => ({ key: r.key, name: r.name })) ?? []}
+            targetRoom={targetRoom}
+            onTargetRoom={setTargetRoom}
+            onAdd={addItem}
+            items={items}
+            selected={picked}
+            onSelect={(uid) => { setPicked(uid); setToolbarMessage(''); }}
+            onRemove={removeItem}
+            onCollapse={() => setSection(null)}
+          />
+        )}
+
+        <div className="canvas">
+          <div ref={mountRef} className="stage" />
+
+          <SpacesPopover
+            open={spacesOpen}
+            onOpen={setSpacesOpen}
+            rooms={home?.rooms.map((r) => ({ key: r.key, name: r.name, items: items.filter((i) => i.roomKey === r.key).length })) ?? []}
+            selected={selected}
+            onSelect={(key) => { setSelected(key); setSpacesOpen(false); }}
+            ceilings={ceilings}
+            onCeilings={setCeilings}
+          />
+          <SummaryCard title={scopeTitle} extent={extent} items={scopeItems} roomName={roomName} />
+
+          {!isProject && (
+            <button type="button" className="corner-btn open-btn" title="Open a code, a sample or a file" onClick={() => setOpenDialog(true)}>
+              <span className="ic" aria-hidden="true">folder_open</span><span>Open</span>
+            </button>
+          )}
+
+          <BottomToolbar
+            view={view}
+            onView={setView}
+            canUndo={editable && canUndo(hist.current)}
+            canRedo={editable && canRedo(hist.current)}
+            onUndo={undoItems}
+            onRedo={redoItems}
+            canEdit={editable && pickedItem !== null}
+            onDuplicate={duplicateItem}
+            onDelete={() => { if (picked !== null) removeItem(picked); }}
+            roomsOpen={spacesOpen}
+            onRooms={() => setSpacesOpen((v) => !v)}
+            ceilings={ceilings}
+            onCeilings={() => setCeilings((v) => !v)}
+            onReset={() => { const s = stageRef.current; if (s) frame(s); }}
+          />
+
+          {pickedItem && (
+            <ItemToolbar
+              ref={toolbarRef}
+              item={pickedItem}
+              roomName={roomName(pickedItem.roomKey)}
+              message={toolbarMessage}
+              onRotate={rotateItem}
+              onFinish={setFinish}
+              onRemove={() => removeItem(pickedItem.uid)}
+              onClose={() => setPicked(null)}
+            />
+          )}
+
+          {(busy || (isProject && sync.state === 'loading' && !home)) && (
+            <div className="veil" role="status">
+              <div className="spinner" />
+              <span>{busy || 'Opening…'}</span>
+            </div>
+          )}
+          {loadFailed && (
+            <div className="veil">
+              <div className="card notice-card">
+                <h2>{sync.loadError!.status === 401 ? 'Please sign in' : 'Couldn’t open this project'}</h2>
+                <p className="muted">{sync.loadError!.status === 401 ? 'Sign in to open this project.' : sync.loadError!.message}</p>
+                <div className="dialog-actions">
+                  {sync.loadError!.status === 401
+                    ? <a className="btn primary" href="/">Sign in</a>
+                    : <a className="btn primary" href="/projects">My projects</a>}
+                </div>
+              </div>
+            </div>
+          )}
+          {error && (
+            <div className="canvas-error" role="alert">
+              <span>{error}</span>
+              <button type="button" className="link" onClick={() => setError('')}>Dismiss</button>
+            </div>
+          )}
+          <Toast message={toast} onDone={() => setToast('')} />
+        </div>
+      </div>
+
+      {!isProject && (
+        <NewProjectDialog open={openDialog} onClose={() => setOpenDialog(false)} onOpen={(text, from) => { setOpenDialog(false); open(text, from); }} />
+      )}
+    </div>
   );
 }

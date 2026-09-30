@@ -6,7 +6,7 @@ import {
   PATTERNS, SHEENS, SWATCHES, SWATCH_FAMILIES, customFinish, finishPreview,
   type Finish, type Pattern, type Sheen,
 } from '@/lib/finishes';
-import { sizeText } from './ItemPanel';
+import { sizeText } from './ItemDrawer';
 
 interface Props {
   item: Item;
