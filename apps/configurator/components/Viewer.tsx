@@ -87,7 +87,7 @@ function frame(stage: Stage) {
     stage.ortho.near = 0.01;
     stage.ortho.far = distance * 4;
     stage.ortho.zoom = 1;
-    stage.orthoHalf = radius * 1.05;
+    stage.orthoHalf = radius * 1.2; // room for the floating bars around the plan
     fitOrtho(stage);
   }
   stage.controls.target.copy(center);
