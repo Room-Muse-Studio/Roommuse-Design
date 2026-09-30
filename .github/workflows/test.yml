@@ -5,8 +5,7 @@ on:
   pull_request:
 
 jobs:
-  # The handoff server, the prototype page and the scan SDK's built file.
-  # Plain Node, nothing to install.
+  # The handoff server and the scan SDK's built file. Plain Node, nothing to install.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -15,9 +14,8 @@ jobs:
         with:
           node-version: 22
       - run: npm test
-      - run: npm run build
 
-  # The 3D viewer (apps/configurator) and the scan SDK's source.
+  # The configurator (apps/configurator), the site build, and the scan SDK's source.
   viewer:
     runs-on: ubuntu-latest
     env:
@@ -40,5 +38,5 @@ jobs:
           fi
       - run: npm run typecheck -w packages/scan-sdk
       - run: npm test -w apps/configurator
-      # Type-checks the viewer too.
-      - run: npm run build -w apps/configurator
+      # The site exactly as Vercel builds it (type-checks the configurator too).
+      - run: npm run build

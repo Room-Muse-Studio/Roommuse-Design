@@ -1,7 +1,9 @@
-# Only the web page, the SDK build, the server code and the API go to Vercel.
+# Only the configurator (built into public/), the SDK, the server code and the API go to Vercel.
 apps/ios
-apps/configurator
-packages/scan-sdk/src
+apps/configurator/node_modules
+apps/configurator/.next
+apps/configurator/out
+apps/configurator/public/samples
 packages/scan-sdk/node_modules
 public
 test

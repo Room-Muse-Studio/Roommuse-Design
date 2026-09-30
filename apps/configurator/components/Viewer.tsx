@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import type { Vec2 } from '@mozu/scan-sdk';
+import { scanFromParams, type Vec2 } from '@mozu/scan-sdk';
 import { loadHome, type ViewerHome } from '@/lib/home';
 import { buildHome, setVisible, type RoomView } from '@/lib/scene';
 import {
@@ -487,7 +487,7 @@ export default function Viewer() {
 
   const openSample = async (name: string) => {
     try {
-      const res = await fetch(`/api/samples/${encodeURIComponent(name)}`, { cache: 'no-store' });
+      const res = await fetch(`/samples/${encodeURIComponent(name)}.roomscan.json`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Could not load the sample "${name}" (HTTP ${res.status}).`);
       open(await res.text(), `samples/${name}.roomscan.json`);
     } catch (e) {
@@ -511,22 +511,30 @@ export default function Viewer() {
       open(JSON.stringify(body.scan), `code ${found}`);
       setCode(found);
     } catch (e) {
-      setError(e instanceof TypeError ? 'Could not reach the viewer server.' : (e as Error).message);
+      setError(e instanceof TypeError ? 'Could not reach the scan service. Check the connection and try again.' : (e as Error).message);
     } finally {
       setLoadingCode(false);
     }
   };
 
   useEffect(() => {
-    fetch('/api/samples', { cache: 'no-store' })
+    fetch('/samples/index.json', { cache: 'no-store' })
       .then((r) => r.json())
       .then((body: { samples: string[] }) => setSamples(body.samples))
       .catch(() => setSamples([]));
-    // /?code=B7K4M2 (or /scan/B7K4M2, which redirects here) opens that scan; otherwise the sample.
-    const linked = new URLSearchParams(window.location.search).get('code');
+    // What the address asks for (the /scan links redirect here):
+    //   ?code=B7K4M2           a scan sent from the phone, by its code
+    //   ?poly=…&h=…[&scan=…]   the phone's "Open in MOZU on this device" link, the scan in the address
+    // Otherwise, the two-bedroom sample.
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get('code');
     if (linked) {
       setCode(linked.toUpperCase());
       void openCode(linked);
+    } else if (params.get('scan') || params.get('poly')) {
+      const scan = scanFromParams(params);
+      if (scan) open(JSON.stringify(scan), 'link from the phone');
+      else setError('The link from the phone is damaged and could not be read.');
     } else {
       void openSample('twobedroom');
     }

@@ -5,6 +5,22 @@ session logs, so they're accurate to within a few minutes; one entry notes where
 
 ---
 
+## 2026-09-30
+
+### 01:45 — The configurator replaces the old prototype as the site
+- Removed `apps/web/index.html` (the packed prototype) and `apps/web/scan-import.js`.
+- `apps/configurator` is built as a static site (`npm run export`, `MOZU_STATIC_EXPORT=1`) and `scripts/build-web.js`
+  puts it in `public/`, which Vercel serves and `npm start` serves locally. Vercel settings, `api/*.js`, Redis and
+  the `/scan` redirects are unchanged; the page calls `/api/scan-handoff` on its own site.
+- The configurator's server routes are gone (a static site can't have them): samples are plain files
+  (`scripts/copy-samples.mjs` → `public/samples/`); `next dev` proxies `/api` and `/scan` to the local server instead.
+  It now also opens the phone's "Open on this device" links (`?poly=…&scan=…`).
+- `npm start` builds, then serves; `npm run serve` serves without rebuilding. `server/server.js` serves `public/`
+  and says so when it hasn't been built.
+- CI: the site build moved to the job that installs dependencies. `.vercelignore`: the configurator (and the SDK's
+  source it builds from) now go to Vercel.
+- `README.md` rewritten for the configurator; server tests updated (36 in all).
+
 ## 2026-09-29
 
 ### 15:02 — "Build house" sends the whole home (mozu.homescan/1)

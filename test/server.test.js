@@ -88,7 +88,13 @@ test('local server: rate limits uploads and lookups per network', async (t) => {
 });
 
 test('local server: /scan links, static files, health', async (t) => {
-  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore() }));
+  // A stand-in for the built site (public/), so this doesn't need a full build.
+  const webDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'mozu-site-'));
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<!doctype html><title>RoomMuse</title>');
+  fs.mkdirSync(path.join(webDir, 'samples'));
+  fs.writeFileSync(path.join(webDir, 'samples', 'index.json'), '{"samples":[]}');
+  t.after(() => fs.rmSync(webDir, { recursive: true, force: true }));
+  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore(), webDir }));
   t.after(close);
   const loc = async (p) => (await fetch(base + p, { redirect: 'manual' })).headers.get('location');
 
@@ -96,8 +102,8 @@ test('local server: /scan links, static files, health', async (t) => {
   assert.equal(await loc('/scan?poly=0,0;1,0;1,1&h=2500'), '/?poly=0%2C0%3B1%2C0%3B1%2C1&h=2500');
   assert.equal(await loc('/scan'), '/');
 
-  const js = await fetch(base + '/scan-import.js');
-  assert.equal(js.status, 200, '/scan-import.js is a file, not a /scan link');
+  const samples = await fetch(base + '/samples/index.json');
+  assert.equal(samples.status, 200, 'a file whose path merely starts with /s is served, not taken for a /scan link');
   assert.equal((await fetch(base + '/packages/scan-sdk/dist/mozu-scan-sdk.global.js')).status, 200);
   assert.equal((await fetch(base + '/../package.json')).status, 404);
   const home = await fetch(base + '/', { method: 'HEAD' });
@@ -187,4 +193,15 @@ test('local server: a home with a broken room is kept with a warning; one with n
     assert.equal(r.status, 400);
     assert.match((await r.json()).error, /mozu\.homescan\/1 home/);
   }
+});
+
+test('local server: says so when the site has not been built', async (t) => {
+  const webDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'mozu-empty-'));
+  t.after(() => fs.rmSync(webDir, { recursive: true, force: true }));
+  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore(), webDir }));
+  t.after(close);
+  const res = await fetch(base + '/');
+  assert.equal(res.status, 503);
+  assert.match(await res.text(), /npm start/);
+  assert.equal((await fetch(base + '/api/health')).status, 200, 'the API works without the site');
 });

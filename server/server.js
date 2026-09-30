@@ -2,7 +2,7 @@
  * MOZU design server — no dependencies, plain Node. For local use (`npm start`);
  * production runs the same API as Vercel functions (api/*.js, vercel.json).
  *
- *   GET  /                              apps/web (the prototype + scan-import.js)
+ *   GET  /                              the site: the configurator, built into public/ (npm run build)
  *   GET  /packages/scan-sdk/dist/*      the scan SDK, so the page can load it
  *   GET  /scan, /scan/:code             what the iPad app links to → redirected to the page
  *   POST /api/scan-handoff              iPad uploads a RoomScan → { code, url, expiresAt }
@@ -21,7 +21,9 @@ const path = require('node:path');
 const { createHandoffApi, scanLinkLocation, sendJson } = require('./handoff-api');
 
 const ROOT = path.resolve(__dirname, '..');
-const WEB_DIR = path.join(ROOT, 'apps', 'web');
+// The built site: the configurator's static export plus the SDK (scripts/build-web.js),
+// the same folder Vercel serves.
+const WEB_DIR = path.join(ROOT, 'public');
 const SDK_DIR = path.join(ROOT, 'packages', 'scan-sdk', 'dist');
 
 const MIME = {
@@ -34,6 +36,9 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.txt': 'text/plain; charset=utf-8',
+  '.woff2': 'font/woff2',
+  '.webp': 'image/webp',
 };
 
 function serveFile(res, baseDir, relPath, method) {
@@ -53,9 +58,13 @@ function serveFile(res, baseDir, relPath, method) {
   return true;
 }
 
-/** Build the server. `options` go to createHandoffApi (tests pass their own store and limits). */
+/**
+ * Build the server. `options` go to createHandoffApi (tests pass their own store
+ * and limits); `options.webDir` overrides where the site is served from.
+ */
 function createServer(options = {}) {
   const api = createHandoffApi(options);
+  const webDir = options.webDir || WEB_DIR;
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -75,8 +84,11 @@ function createServer(options = {}) {
 
       if (p.startsWith('/packages/scan-sdk/dist/')) {
         if (serveFile(res, SDK_DIR, p.slice('/packages/scan-sdk/dist/'.length), req.method)) return;
-      } else if (serveFile(res, WEB_DIR, p === '/' ? 'index.html' : p, req.method)) {
+      } else if (serveFile(res, webDir, p === '/' ? 'index.html' : p, req.method)) {
         return;
+      } else if (p === '/' || p === '/index.html') {
+        res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' });
+        return res.end('The site has not been built yet. Run "npm start" (it builds first), or "npm run build" then "npm run serve".');
       }
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
