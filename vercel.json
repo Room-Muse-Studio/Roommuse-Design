@@ -3,8 +3,9 @@
   "framework": null,
   "buildCommand": "node scripts/build-web.js",
   "outputDirectory": "public",
+  "cleanUrls": true,
   "functions": {
-    "api/*.js": {
+    "api/**/*.js": {
       "includeFiles": "packages/scan-sdk/dist/**",
       "maxDuration": 15
     }
