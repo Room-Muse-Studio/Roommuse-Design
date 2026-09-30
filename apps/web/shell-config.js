@@ -9,7 +9,7 @@
  * projectId.
  */
 window.MOZU_FIREBASE = {
-  apiKey: '',
-  authDomain: '',
-  projectId: '',
+  apiKey: 'AIzaSyBJj37svX5Dt7f_NnO-5YOlTKj4FngtSOA',
+  authDomain: 'roommuse-c02cb.firebaseapp.com',
+  projectId: 'roommuse-c02cb',
 };
