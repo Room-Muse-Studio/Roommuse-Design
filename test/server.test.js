@@ -121,8 +121,19 @@ test('Vercel functions: same contract through api/*.js', async (t) => {
     '/api/scan-handoff': require('../api/scan-handoff'),
     '/api/health': require('../api/health'),
     '/api/scan-link': require('../api/scan-link'),
+    '/api/auth/[action]': require('../api/auth/[action]'),
+    '/api/projects/index': require('../api/projects/index'),
+    '/api/projects/[...path]': require('../api/projects/[...path]'),
   };
-  // Stand-in for Vercel's router, including vercel.json's /scan rewrites.
+  // Stand-in for Vercel's file-system router: exact files first, then
+  // [action] for one segment and [...path] for one or more (never zero).
+  const resolve = (pathname) => {
+    if (functions[pathname]) return functions[pathname];
+    if (/^\/api\/auth\/[^/]+$/.test(pathname)) return functions['/api/auth/[action]'];
+    if (pathname === '/api/projects' || pathname === '/api/projects/') return functions['/api/projects/index'];
+    if (/^\/api\/projects\/[^/]+/.test(pathname)) return functions['/api/projects/[...path]'];
+    return null;
+  };
   const vercel = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const m = url.pathname.match(/^\/scan(?:\/([^/]+))?$/);
@@ -130,7 +141,7 @@ test('Vercel functions: same contract through api/*.js', async (t) => {
       if (m[1]) url.searchParams.set('code', m[1]);
       req.url = '/api/scan-link' + url.search;
     }
-    const fn = functions[new URL(req.url, 'http://localhost').pathname];
+    const fn = resolve(new URL(req.url, 'http://localhost').pathname);
     if (fn) return fn(req, res);
     res.writeHead(404); res.end();
   });
@@ -143,4 +154,8 @@ test('Vercel functions: same contract through api/*.js', async (t) => {
   assert.equal((await fetch(`${base}/api/health`)).status, 200);
   assert.equal((await fetch(`${base}/scan/${ticket.code}`, { redirect: 'manual' })).headers.get('location'), `/?code=${ticket.code}`);
   assert.equal((await fetch(`${base}/scan?poly=1&h=2`, { redirect: 'manual' })).headers.get('location'), '/?poly=1&h=2');
+  // Account routes reach their functions (401 = handled, not a routing 404).
+  assert.equal((await fetch(`${base}/api/auth/me`)).status, 401);
+  assert.equal((await fetch(`${base}/api/projects`)).status, 401, 'bare /api/projects is served by index.js');
+  assert.equal((await fetch(`${base}/api/projects/abcdefgh12`)).status, 401);
 });

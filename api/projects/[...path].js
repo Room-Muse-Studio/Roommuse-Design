@@ -1,4 +1,4 @@
-// /api/projects and /api/projects/:id[/duplicate] — see server/project-api.js.
+// /api/projects/:id[/duplicate] — see server/project-api.js. The bare /api/projects is index.js.
 'use strict';
 const { projects } = require('../_app');
 
