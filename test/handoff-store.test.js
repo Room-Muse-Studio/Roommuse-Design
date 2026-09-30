@@ -160,3 +160,32 @@ test('redis: a whole home is stored and comes back intact, with the 24-hour expi
   assert.deepEqual(found.scan, home);
   assert.equal(found.expiresAt - found.createdAt, 24 * 60 * 60 * 1000);
 });
+
+for (const [name, make] of [
+  ['memory', (now) => new MemoryHandoffStore({ now })],
+  ['redis', (now) => new RedisHandoffStore({ url: 'https://redis.test', token: 'secret', fetch: fakeUpstash({ now }).fetch })],
+]) {
+  test(`${name}: a design is stored and never expires; keeping a code makes its scan permanent`, async () => {
+    let t = Date.now();
+    const store = make(() => t);
+    const entry = await storeScan(store, scan, t);
+    assert.equal(await store.getDesign(entry.code), null);
+    const design = { version: 1, items: [{ uid: 1 }], savedAt: 'now' };
+    await store.setDesign(entry.code, design);
+    await store.keep(entry.code);
+    t += 30 * 24 * 60 * 60 * 1000; // a month later
+    const found = await store.get(entry.code);
+    assert.ok(found, 'the scan is still there');
+    assert.equal(found.expiresAt, null);
+    assert.deepEqual(await store.getDesign(entry.code), design);
+  });
+
+  test(`${name}: a scan without a saved design still expires`, async () => {
+    let t = Date.now();
+    const store = make(() => t);
+    const entry = await storeScan(store, scan, t);
+    t += 25 * 60 * 60 * 1000;
+    // (The Redis store double-checks against the real clock too; the fake Redis drops the key.)
+    assert.equal(await store.get(entry.code), null);
+  });
+}

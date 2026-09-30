@@ -205,3 +205,80 @@ test('local server: says so when the site has not been built', async (t) => {
   assert.match(await res.text(), /npm start/);
   assert.equal((await fetch(base + '/api/health')).status, 200, 'the API works without the site');
 });
+
+// ── designs: saved forever, anyone with the code can edit ────────────────────
+
+const designApi = (base) => ({
+  get: (code) => fetch(`${base}/api/design?code=${code}`).then(async (r) => ({ status: r.status, body: await r.json() })),
+  save: (code, items) => fetch(`${base}/api/design?code=${code}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }),
+  }).then(async (r) => ({ status: r.status, body: await r.json() })),
+});
+
+test('designs: anyone with the code saves; each save updates the design', async (t) => {
+  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore(), limits: { uploads: 0, lookups: 0, edits: 0 } }));
+  t.after(close);
+  const { code } = await (await post(base, SAMPLE)).json();
+  const d = designApi(base);
+
+  assert.deepEqual((await d.get(code)).body, { code, design: null });
+  let r = await d.save(code, [{ uid: 1, name: 'Bed' }]);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.version, 1);
+  // A second person, same code, saves too: it simply updates the design.
+  r = await d.save(code, [{ uid: 1, name: 'Bed' }, { uid: 2, name: 'Desk' }]);
+  assert.equal(r.body.version, 2);
+  const got = (await d.get(code)).body.design;
+  assert.equal(got.version, 2);
+  assert.deepEqual(got.items.map((i) => i.name), ['Bed', 'Desk']);
+  assert.ok(Date.parse(got.savedAt));
+
+  // A saved design keeps its code: the scan no longer expires.
+  assert.equal((await (await fetch(`${base}/api/scan-handoff?code=${code}`)).json()).expiresAt, null);
+});
+
+test('designs: a saved design keeps its code for good; unsaved codes still expire', async (t) => {
+  let now = Date.now();
+  const store = new MemoryHandoffStore({ now: () => now });
+  const { base, close } = await listen(createServer({ store, limits: { uploads: 0, lookups: 0, edits: 0 } }));
+  t.after(close);
+  const kept = (await (await post(base, SAMPLE)).json()).code;
+  const dropped = (await (await post(base, SAMPLE)).json()).code;
+  const d = designApi(base);
+  assert.equal((await d.save(kept, [{ uid: 1 }])).status, 200);
+  now += 2 * 24 * 60 * 60 * 1000;
+  assert.equal((await fetch(`${base}/api/scan-handoff?code=${kept}`)).status, 200);
+  assert.deepEqual((await d.get(kept)).body.design.items, [{ uid: 1 }]);
+  assert.equal((await fetch(`${base}/api/scan-handoff?code=${dropped}`)).status, 404);
+  assert.equal((await d.get(dropped)).status, 404);
+});
+
+test('designs: bad requests are refused clearly', async (t) => {
+  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore(), limits: { uploads: 0, lookups: 0, edits: 0 } }));
+  t.after(close);
+  const { code } = await (await post(base, SAMPLE)).json();
+  const d = designApi(base);
+  assert.equal((await d.get('abc')).status, 400);
+  assert.equal((await d.get('B7K4M2')).status, 404);
+  assert.equal((await d.save(code, 'not a list')).status, 400);
+  assert.equal((await fetch(`${base}/api/design?code=${code}`, { method: 'PUT', body: 'nope' })).status, 400);
+  assert.equal((await fetch(`${base}/api/design?code=${code}`, { method: 'DELETE' })).status, 405);
+  const big = await d.save(code, [{ blob: 'x'.repeat(2_100_000) }]);
+  assert.equal(big.status, 413);
+});
+
+test('designs: the Vercel function does the same', async (t) => {
+  const handoff = require('../api/scan-handoff'), designFn = require('../api/design');
+  const vercel = http.createServer((req, res) => {
+    const p = new URL(req.url, 'http://localhost').pathname;
+    if (p === '/api/scan-handoff') return handoff(req, res);
+    if (p === '/api/design') return designFn(req, res);
+    res.writeHead(404); res.end();
+  });
+  const { base, close } = await listen(vercel);
+  t.after(close);
+  const { code } = await (await post(base, SAMPLE)).json();
+  const d = designApi(base);
+  assert.equal((await d.save(code, [{ uid: 7 }])).body.version, 1);
+  assert.deepEqual((await d.get(code)).body.design.items, [{ uid: 7 }]);
+});

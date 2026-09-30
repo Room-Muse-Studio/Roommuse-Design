@@ -30,7 +30,12 @@ Node 20 or newer. Run `npm install` once (and after pulling changes).
 The website. It opens a scan by **Code from the phone**, from a `/scan/B7K4M2` link, from a sample, or from a
 `mozu.roomscan/1` / `mozu.homescan/1` file, with every room at its real position. The **Rooms** menu isolates one;
 **Show ceilings** adds ceilings. The right-hand panel adds cabinets and furniture; click an item for its menu
-(rotate, colour and texture, remove), drag it to move it, drop it on another to swap them. Nothing is saved yet.
+(rotate, colour and texture, remove), drag it to move it, drop it on another to swap them.
+
+**Saving:** a scan opened by code saves every change automatically, under that code, for good (the code stops
+expiring once a design is saved). Anyone with the code can open and edit it, several people at once: each change
+updates the saved design (the latest save wins), and open pages pick up other people's changes within a few
+seconds. A sample or file isn't saved until you click **Save & get a code**.
 
 It's deployed as a static site (`npm run build` → `public/`), beside the handoff API: the page calls
 `/api/scan-handoff` on its own site, and `/scan/:code` redirects to `/?code=:code`.
@@ -184,6 +189,8 @@ the app's **Advanced → MOZU web address** field. **Reset** there returns to pr
 | `/scan?poly=…&h=…&scan=…` | the app's "Open in MOZU on this device" link |
 | `POST /api/scan-handoff` | upload a scan → `{ code, url, expiresAt }` (201), or `{ error }` with 400, 413, 429 or 503 |
 | `GET /api/scan-handoff?code=…` | fetch it → `{ code, scan, expiresAt }` (200), 400 bad code, 404 unknown/expired, 429 |
+| `GET /api/design?code=…` | the design saved under a code → `{ code, design: { version, items, savedAt } \| null }`; 404 unknown/expired |
+| `PUT /api/design?code=…` | save `{ items }` → `{ version, savedAt }`; anyone with the code; keeps the code for good |
 | `GET /api/health` | `{ ok: true, store }` (200), or 503 when the store can't be reached |
 
 ---
@@ -195,7 +202,7 @@ the app's **Advanced → MOZU web address** field. **Reset** there returns to pr
 | App says "Could not reach MOZU" | Check the phone's internet connection. If you changed **Advanced → MOZU web address**, tap **Reset**. |
 | App says "Too many requests" | One network sent more than 20 scans in 10 minutes. Wait, or raise `RATE_LIMIT_UPLOADS`. |
 | "MOZU could not reach its storage" (503) | Redis isn't connected to the Vercel project, or Upstash is down. Check `/api/health` and the project's Storage tab. |
-| "That code was not found or has expired" | Codes last 24 hours. Tap **Send to MOZU web** again; you don't need to rescan. |
+| "That code was not found or has expired" | Codes last 24 hours unless a design was saved under them. Tap **Send to MOZU web** again; you don't need to rescan. |
 | The page says "The site has not been built yet" | You ran `npm run serve` before building. Run `npm start` (it builds first). |
 | "Port 3000 is already in use" | `PORT=3100 npm start`, or stop the other server: `lsof -ti:3000 \| xargs kill` |
 | Xcode: "Signing for MozuScanner requires a development team" | Install step 4: pick your Team. |

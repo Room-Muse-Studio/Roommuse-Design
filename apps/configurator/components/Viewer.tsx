@@ -16,6 +16,7 @@ import { containsPoint } from '@/lib/walls';
 import type { Finish } from '@/lib/finishes';
 import ItemPanel from './ItemPanel';
 import ItemToolbar from './ItemToolbar';
+import { useDesignSync } from './useDesignSync';
 
 const ALL = 'all';
 const ACCENT = 0xc33a20, BLOCKED = 0x8a8f94, SWAP = 0x2f6fd6;
@@ -82,6 +83,8 @@ export default function Viewer() {
   const [targetRoom, setTargetRoom] = useState('');
   const [panelMessage, setPanelMessage] = useState('');
   const [toolbarMessage, setToolbarMessage] = useState('');
+  /** The code the open scan came from; its design is saved under it. Null for samples and files. */
+  const [designCode, setDesignCode] = useState<string | null>(null);
   const nextUid = useRef(1);
 
   // The pointer handlers live as long as the renderer; they read the latest state through these.
@@ -412,6 +415,25 @@ export default function Viewer() {
   const roomOf = (key: string) => home?.rooms.find((r) => r.key === key);
   const pickedItem = items.find((i) => i.uid === picked) ?? null;
 
+  // Save the items under the code, and pick up what others save there.
+  const sync = useDesignSync({
+    code: designCode,
+    home,
+    items,
+    replaceItems: (next) => {
+      setItems(next);
+      nextUid.current = Math.max(nextUid.current, ...next.map((i) => i.uid + 1));
+      setPicked((p) => (p !== null && next.some((i) => i.uid === p) ? p : null));
+    },
+    onCode: (newCode) => {
+      setDesignCode(newCode);
+      setCode(newCode);
+      setSource(`code ${newCode}`);
+      window.history.replaceState(null, '', `/?code=${newCode}`);
+    },
+  });
+  const savedTime = sync.savedAt ? new Date(sync.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
   const addItem = (specId: string) => {
     const spec = specById(specId);
     const room = roomOf(targetRoom);
@@ -475,10 +497,12 @@ export default function Viewer() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const open = (text: string, name: string) => {
+  /** Show a scan. `fromCode` is the code it came from, so its design is loaded and saved there. */
+  const open = (text: string, name: string, fromCode: string | null = null) => {
     try {
       setHome(loadHome(text));
       setSource(name);
+      setDesignCode(fromCode);
       setError('');
     } catch (e) {
       setError((e as Error).message);
@@ -508,7 +532,7 @@ export default function Viewer() {
       const body = (await res.json().catch(() => ({}))) as { code?: string; scan?: unknown; error?: string };
       if (!res.ok || !body.scan) throw new Error(body.error || `The scan service could not find that code (HTTP ${res.status}).`);
       const found = body.code ?? wanted.toUpperCase();
-      open(JSON.stringify(body.scan), `code ${found}`);
+      open(JSON.stringify(body.scan), `code ${found}`, found);
       setCode(found);
     } catch (e) {
       setError(e instanceof TypeError ? 'Could not reach the scan service. Check the connection and try again.' : (e as Error).message);
@@ -605,6 +629,31 @@ export default function Viewer() {
               />
             </label>
           </div>
+        </div>
+
+        <div className="save-status" aria-live="polite">
+          {designCode ? (
+            <>
+              <strong>
+                {sync.status === 'loading' ? 'Loading the saved design…'
+                  : sync.status === 'saving' ? 'Saving…'
+                  : sync.status === 'error' ? 'Not saved'
+                  : savedTime ? `Saved · ${savedTime}` : 'Saved'}
+              </strong>
+              {sync.status === 'error' ? <span className="error">{sync.error} Your next change tries again.</span>
+                : <span>Anyone with code {designCode} can open and edit this design. It&apos;s kept for good.</span>}
+              {sync.notice && sync.status !== 'error' && <span className="notice-inline">{sync.notice}</span>}
+            </>
+          ) : home ? (
+            <>
+              <strong>Not saved</strong>
+              <span>Changes to a sample or file stay in this tab.</span>
+              <button type="button" className="secondary" onClick={() => void sync.saveAndGetCode()} disabled={sync.status === 'saving'}>
+                {sync.status === 'saving' ? 'Saving…' : 'Save & get a code'}
+              </button>
+              {sync.status === 'error' && <span className="error">{sync.error}</span>}
+            </>
+          ) : null}
         </div>
 
         {error && <p className="error" role="alert">{error}</p>}

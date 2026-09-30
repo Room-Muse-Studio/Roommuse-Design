@@ -16,6 +16,7 @@ const { pathToFileURL } = require('node:url');
 const {
   MAX_SCAN_BYTES,
   HANDOFF_TTL_MS,
+  MAX_DESIGN_BYTES,
   createStore,
   storeScan,
   fetchScan,
@@ -133,13 +134,15 @@ function readBody(req, limit) {
 /**
  * Build the API handlers around one store.
  *   options.store   — a store from handoff-store.js; default createStore() on first use
- *   options.limits  — { uploads, lookups } per IP per 10 minutes; 0 turns a limit off
+ *   options.limits  — { uploads, lookups, edits } per IP per 10 minutes; 0 turns a limit off
  */
 function createHandoffApi(options = {}) {
   let store = options.store || null;
   const limits = {
     uploads: numberFrom(process.env.RATE_LIMIT_UPLOADS, 20),
     lookups: numberFrom(process.env.RATE_LIMIT_LOOKUPS, 60),
+    // Saving and checking for other people's saves: a busy editor makes a few hundred of these.
+    edits: numberFrom(process.env.RATE_LIMIT_EDITS, 1200),
     ...options.limits,
   };
   const ttlMs = options.ttlMs || HANDOFF_TTL_MS;
@@ -225,7 +228,8 @@ function createHandoffApi(options = {}) {
     return sendJson(res, 200, {
       code: found.code,
       scan: found.scan,
-      expiresAt: new Date(found.expiresAt).toISOString(),
+      // null once a design has been saved: the code no longer expires.
+      expiresAt: found.expiresAt === null ? null : new Date(found.expiresAt).toISOString(),
     });
   }
 
@@ -244,6 +248,56 @@ function createHandoffApi(options = {}) {
   }
 
   /** /api/health */
+  // ── designs ──────────────────────────────────────────────────────────
+  //
+  //   GET /api/design?code=     → { code, design: { version, items, savedAt } | null }
+  //   PUT /api/design?code=  { items }  → { version, savedAt }
+  //
+  // Anyone with the code can save, several people at once; each save replaces
+  // the design (the latest save wins) and bumps its version, which is how open
+  // pages notice someone else's changes. Saving keeps the code for good.
+
+  async function design(req, res) {
+    const url = new URL(req.url, 'http://localhost');
+    try {
+      if (!(await allowed(req, 'edits'))) return tooMany(res);
+      const code = normaliseCode(url.searchParams.get('code') || '');
+      if (!code) return sendJson(res, 400, { error: 'Enter the 6-character code shown in the MOZU Scanner app.' });
+      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'PUT') {
+        return sendJson(res, 405, { error: 'Use GET to load a design or PUT to save one.' }, { allow: 'GET, PUT' });
+      }
+      let body = null;
+      if (req.method === 'PUT') {
+        let text;
+        try {
+          text = await readBody(req, MAX_DESIGN_BYTES);
+        } catch (e) {
+          return sendJson(res, e.status || 400, { error: e.status === 413 ? 'The design is too large to save (limit 2 MB).' : 'Could not read the request.' });
+        }
+        try { body = JSON.parse(text); } catch { body = null; }
+        if (!body || !Array.isArray(body.items)) return sendJson(res, 400, { error: 'A design needs items (a list).' });
+      }
+      const store = getStore();
+      try {
+        if (!(await store.get(code))) {
+          return sendJson(res, 404, { error: 'That code was not found or has expired (codes last 24 hours unless a design is saved).' });
+        }
+        if (!body) return sendJson(res, 200, { code, design: await store.getDesign(code) });
+        const current = await store.getDesign(code);
+        const saved = { version: (current ? current.version : 0) + 1, items: body.items, savedAt: new Date().toISOString() };
+        await store.setDesign(code, saved);
+        await store.keep(code); // a saved design keeps its scan, and its code, for good
+        return sendJson(res, 200, { version: saved.version, savedAt: saved.savedAt });
+      } catch (e) {
+        return unavailable(res, e);
+      }
+    } catch (e) {
+      console.error('[mozu]', e);
+      if (!res.headersSent) return sendJson(res, 500, { error: 'Server error.' });
+      res.end();
+    }
+  }
+
   async function health(req, res) {
     try {
       const s = getStore();
@@ -255,7 +309,7 @@ function createHandoffApi(options = {}) {
     }
   }
 
-  return { handoff, health, getStore };
+  return { handoff, design, health, getStore };
 }
 
 /**

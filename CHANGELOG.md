@@ -7,6 +7,19 @@ session logs, so they're accurate to within a few minutes; one entry notes where
 
 ## 2026-09-30
 
+### 02:02 — Designs saved to Redis, kept for good, editable by anyone with the code
+- `server/handoff-store.js`: designs stored per code (`mozu:design:CODE`, no expiry); `keep(code)` makes a scan
+  permanent (a scan whose `expiresAt` is null never expires). Both stores (memory and Redis).
+- `server/handoff-api.js`, `server/server.js`, `api/design.js` (new): `GET /api/design?code=` loads the design,
+  `PUT` saves `{ items }`. Anyone with the code can save, several at once; each save replaces the design (the
+  latest wins) and bumps its version. Saving keeps the code for good. A separate `edits` rate limit (1200 per 10 min).
+- Configurator: `components/useDesignSync.ts` (new) saves each change ~0.7 s after it's made, picks up others'
+  saves every 4 s when it has no unsaved changes of its own, and sends a pending change when the tab closes.
+  Samples and files get **Save & get a code**. A status line shows Saved / Saving… / why not.
+- Tests: 8 new (store: designs never expire, unsaved codes still do; API: shared saving, permanence, bad requests,
+  the Vercel function).
+- (An edit lock allowing one editor at a time was built first, then removed at the user's request.)
+
 ### 01:45 — The configurator replaces the old prototype as the site
 - Removed `apps/web/index.html` (the packed prototype) and `apps/web/scan-import.js`.
 - `apps/configurator` is built as a static site (`npm run export`, `MOZU_STATIC_EXPORT=1`) and `scripts/build-web.js`

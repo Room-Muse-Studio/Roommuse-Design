@@ -7,6 +7,7 @@
  *   GET  /scan, /scan/:code             what the iPad app links to → redirected to the page
  *   POST /api/scan-handoff              iPad uploads a RoomScan → { code, url, expiresAt }
  *   GET  /api/scan-handoff?code=XXXXXX  page fetches it back   → { code, scan, expiresAt }
+ *   GET/PUT /api/design?code=…          the design saved under a code (anyone with the code can save)
  *   GET  /api/health                    store reachable?
  *
  * The request/response shape matches apps/ios/MozuScanner/Export/Handoff.swift
@@ -72,6 +73,7 @@ function createServer(options = {}) {
     try { p = decodeURIComponent(url.pathname); } catch { p = url.pathname; }
     try {
       if (p === '/api/scan-handoff' || p === '/api/scan-handoff/') return await api.handoff(req, res);
+      if (p === '/api/design' || p === '/api/design/') return await api.design(req, res);
       if (p === '/api/health') return await api.health(req, res);
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed.' });
 
