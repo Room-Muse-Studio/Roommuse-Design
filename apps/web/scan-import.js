@@ -150,16 +150,32 @@
     return sdkPromise;
   }
 
-  /** Validate with the SDK, but take fixtures from the raw JSON — the built SDK drops them. */
+  /** Validate and normalise with the SDK; the built-in parser is only for when it fails to load. */
+  /**
+   * The prototype plans one kitchen, but "Build house" on the iPad sends a whole
+   * home (mozu.homescan/1). Take its one kitchen, or its only room; otherwise say
+   * which rooms it holds and where a whole home can be opened.
+   */
+  function roomFromHome(home) {
+    var rooms = Array.isArray(home.rooms) ? home.rooms : [];
+    var named = function (r, i) { return (r && r.name) || 'Room ' + (i + 1); };
+    if (rooms.length === 1) return rooms[0];
+    var kitchens = rooms.filter(function (r) { return r && r.type === 'kitchen'; });
+    if (kitchens.length === 1) return kitchens[0];
+    throw new Error('This is a whole home (' + rooms.length + ' rooms: ' + rooms.map(named).join(', ') + '). ' +
+      'This page plans one room; open the code in the RoomMuse viewer to see them all, ' +
+      'or scan the kitchen on its own and send just that room.');
+  }
+
   function parse(text) {
     var raw;
     try { raw = JSON.parse(text); } catch (e) { throw new Error('This file is not valid JSON.'); }
     if (!raw || typeof raw !== 'object') throw new Error('This file is not a room scan.');
+    if (raw.schema === 'mozu.homescan/1') raw = roomFromHome(raw);
     if (raw.schema && raw.schema !== 'mozu.roomscan/1') throw new Error('Unsupported scan format "' + raw.schema + '".');
     return loadSdk().then(function (sdk) {
       var scan = sdk && sdk.parseScan ? sdk.parseScan(JSON.stringify(raw)) : fallbackParse(raw);
       if (!scan) throw new Error('This file has no usable room outline (it needs at least 3 corner points).');
-      scan.fixtures = Array.isArray(raw.fixtures) ? raw.fixtures : [];
       return scan;
     });
   }
@@ -173,6 +189,7 @@
       polygon: polygon, height: Number(raw.height) || 2700,
       openings: Array.isArray(raw.openings) ? raw.openings : [],
       objects: Array.isArray(raw.objects) ? raw.objects : [],
+      fixtures: Array.isArray(raw.fixtures) ? raw.fixtures : [],
       source: raw.source || 'manual', confidence: typeof raw.confidence === 'number' ? raw.confidence : 0.8,
       capturedAt: raw.capturedAt || new Date().toISOString(),
     };

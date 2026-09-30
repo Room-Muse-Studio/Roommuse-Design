@@ -28,32 +28,51 @@ const RATE_WINDOW_MS = 10 * 60 * 1000;
 
 // ── scan validation ────────────────────────────────────────────────────────
 
-// The built SDK validates the room outline. It drops `fixtures`, so those are
-// carried over from the raw JSON (same as apps/web/scan-import.js).
-let sdkParse = null;
+// The built SDK validates the room outline and normalises the scan (fixtures
+// included). The checks below are only for when it fails to load.
+const ROOMSCAN = 'mozu.roomscan/1';
+const HOMESCAN = 'mozu.homescan/1';
+let sdk = null;
 const sdkReady = import(pathToFileURL(SDK_FILE).href)
-  .then((sdk) => { sdkParse = sdk.parseScan; })
+  .then((module) => { sdk = module; })
   .catch((e) => console.warn('[mozu] scan SDK not loaded, using built-in checks:', e.message));
 
+/** One room without the SDK: at least 3 usable corners. */
+function fallbackRoom(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const polygon = Array.isArray(raw.polygon)
+    ? raw.polygon.map((p) => ({ x: Number(p && p.x), z: Number(p && p.z) }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z))
+    : [];
+  const list = (key) => (Array.isArray(raw[key]) ? raw[key] : []);
+  return polygon.length >= 3
+    ? { ...raw, schema: ROOMSCAN, polygon, openings: list('openings'), objects: list('objects'), fixtures: list('fixtures') }
+    : null;
+}
+
+/** A single room (mozu.roomscan/1), normalised; null if it isn't one. */
 async function parseScan(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  if (raw.schema && raw.schema !== 'mozu.roomscan/1') return null;
+  if (raw.schema && raw.schema !== ROOMSCAN) return null;
   await sdkReady;
-  let scan;
-  if (sdkParse) {
-    scan = sdkParse(JSON.stringify(raw));
-  } else {
-    const polygon = Array.isArray(raw.polygon)
-      ? raw.polygon.map((p) => ({ x: Number(p && p.x), z: Number(p && p.z) }))
-        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z))
-      : [];
-    scan = polygon.length >= 3
-      ? { openings: [], objects: [], ...raw, schema: 'mozu.roomscan/1', polygon }
-      : null;
-  }
-  if (!scan) return null;
-  scan.fixtures = Array.isArray(raw.fixtures) ? raw.fixtures : [];
-  return scan;
+  return sdk ? sdk.parseScan(JSON.stringify(raw)) : fallbackRoom(raw);
+}
+
+/**
+ * A whole home (mozu.homescan/1: several rooms in one coordinate space),
+ * normalised: `{ home, warnings }`, or null if no room in it is usable. Rooms
+ * without an outline and connections that point nowhere are left out, and
+ * `warnings` says which.
+ */
+async function parseHome(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.schema !== HOMESCAN) return null;
+  await sdkReady;
+  if (sdk) return sdk.parseHomeScan(JSON.stringify(raw));
+  const all = Array.isArray(raw.rooms) ? raw.rooms : [];
+  const rooms = all.map(fallbackRoom).filter(Boolean);
+  if (!rooms.length) return null;
+  const warnings = rooms.length < all.length ? [`${all.length - rooms.length} room(s) had no usable outline and were left out.`] : [];
+  return { home: { schema: HOMESCAN, rooms, capturedAt: typeof raw.capturedAt === 'string' ? raw.capturedAt : rooms[0].capturedAt }, warnings };
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────
@@ -162,9 +181,19 @@ function createHandoffApi(options = {}) {
       return sendJson(res, e.status || 400, { error: e.status === 413 ? 'Scan is too large (limit 2 MB).' : 'Could not read the upload.' });
     }
     let raw;
-    try { raw = JSON.parse(text); } catch { return sendJson(res, 400, { error: 'Body must be RoomScan JSON.' }); }
-    const scan = await parseScan(raw);
-    if (!scan) return sendJson(res, 400, { error: 'Not a valid mozu.roomscan/1 room (it needs at least 3 corner points).' });
+    try { raw = JSON.parse(text); } catch { return sendJson(res, 400, { error: 'Body must be RoomScan JSON (one room) or HomeScan JSON (a whole home).' }); }
+    // A whole home from the "Build house" screen, or a single room.
+    let scan, warnings = [], summary;
+    if (raw && raw.schema === HOMESCAN) {
+      const parsed = await parseHome(raw);
+      if (!parsed) return sendJson(res, 400, { error: 'Not a valid mozu.homescan/1 home (it needs at least one room with 3 or more corner points).' });
+      ({ home: scan, warnings } = parsed);
+      summary = `home, ${scan.rooms.length} rooms, ${(scan.connections || []).length} connections`;
+    } else {
+      scan = await parseScan(raw);
+      if (!scan) return sendJson(res, 400, { error: 'Not a valid mozu.roomscan/1 room (it needs at least 3 corner points).' });
+      summary = `${scan.polygon.length} corners, ${(scan.openings || []).length} openings, ${scan.fixtures.length} fixtures`;
+    }
 
     let entry;
     try {
@@ -172,11 +201,13 @@ function createHandoffApi(options = {}) {
     } catch (e) {
       return unavailable(res, e);
     }
-    console.log(`[mozu] stored scan ${entry.code} (${scan.polygon.length} corners, ${(scan.openings || []).length} openings, ${scan.fixtures.length} fixtures)`);
+    console.log(`[mozu] stored scan ${entry.code} (${summary})`);
     return sendJson(res, 201, {
       code: entry.code,
       url: handoffUrl(originOf(req), entry.code),
       expiresAt: new Date(entry.expiresAt).toISOString(),
+      // Only when part of a home had to be left out; the iPad ignores fields it doesn't know.
+      ...(warnings.length ? { warnings } : {}),
     });
   }
 
@@ -244,4 +275,4 @@ function numberFrom(value, fallback) {
   return value !== undefined && value !== '' && Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-module.exports = { createHandoffApi, scanLinkLocation, parseScan, sendJson, originOf, clientIp, readBody };
+module.exports = { createHandoffApi, scanLinkLocation, parseScan, parseHome, sendJson, originOf, clientIp, readBody };

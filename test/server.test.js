@@ -135,4 +135,56 @@ test('Vercel functions: same contract through api/*.js', async (t) => {
   assert.equal((await fetch(`${base}/api/health`)).status, 200);
   assert.equal((await fetch(`${base}/scan/${ticket.code}`, { redirect: 'manual' })).headers.get('location'), `/?code=${ticket.code}`);
   assert.equal((await fetch(`${base}/scan?poly=1&h=2`, { redirect: 'manual' })).headers.get('location'), '/?poly=1&h=2');
+
+  // A whole home from "Build house" takes the same path.
+  const HOME = fs.readFileSync(path.join(__dirname, '..', 'samples', 'twobedroom.roomscan.json'), 'utf8');
+  const homeTicket = await (await post(base, HOME)).json();
+  const home = await (await fetch(`${base}/api/scan-handoff?code=${homeTicket.code}`)).json();
+  assert.equal(home.scan.schema, 'mozu.homescan/1');
+  assert.equal(home.scan.rooms.length, 3);
+});
+
+test('local server: a whole home (mozu.homescan/1) goes up and comes back under one code', async (t) => {
+  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore(), limits: { uploads: 0, lookups: 0 } }));
+  t.after(close);
+  const HOME = fs.readFileSync(path.join(__dirname, '..', 'samples', 'twobedroom.roomscan.json'), 'utf8');
+
+  const res = await post(base, HOME);
+  assert.equal(res.status, 201);
+  const ticket = await res.json();
+  assert.ok(!('warnings' in ticket));
+  const body = await (await fetch(`${base}/api/scan-handoff?code=${ticket.code}`)).json();
+  assert.equal(body.scan.schema, 'mozu.homescan/1');
+  assert.deepEqual(body.scan.rooms.map((r) => r.name), ['Hallway', 'Bedroom A', 'Bedroom B']);
+  assert.equal(body.scan.connections.length, 5);
+  assert.equal(body.scan.rooms[1].fixtures.length, 3, 'sockets survive');
+
+  // As the iPad sends it: rooms with generated ids and names, no connections.
+  const fromIpad = JSON.parse(HOME);
+  delete fromIpad.connections;
+  fromIpad.rooms.forEach((r, i) => { r.id = `8F1C${i}-UUID`; r.name = `Room ${i + 1}`; });
+  const up = await post(base, JSON.stringify(fromIpad));
+  assert.equal(up.status, 201);
+  const back = await (await fetch(`${base}/api/scan-handoff?code=${(await up.json()).code}`)).json();
+  assert.deepEqual(back.scan.rooms.map((r) => r.id), ['8F1C0-UUID', '8F1C1-UUID', '8F1C2-UUID']);
+  assert.ok(!('connections' in back.scan));
+});
+
+test('local server: a home with a broken room is kept with a warning; one with no usable room is refused', async (t) => {
+  const { base, close } = await listen(createServer({ store: new MemoryHandoffStore(), limits: { uploads: 0, lookups: 0 } }));
+  t.after(close);
+  const home = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'samples', 'twobedroom.roomscan.json'), 'utf8'));
+  home.rooms[2].polygon = [{ x: 0, z: 0 }];
+  const res = await post(base, JSON.stringify(home));
+  assert.equal(res.status, 201);
+  const ticket = await res.json();
+  assert.match(ticket.warnings[0], /Room 3 has no usable outline/);
+  const body = await (await fetch(`${base}/api/scan-handoff?code=${ticket.code}`)).json();
+  assert.equal(body.scan.rooms.length, 2);
+
+  for (const bad of [{ schema: 'mozu.homescan/1', rooms: [] }, { schema: 'mozu.homescan/1', rooms: [{ polygon: [] }] }, { schema: 'mozu.homescan/1' }]) {
+    const r = await post(base, JSON.stringify(bad));
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /mozu\.homescan\/1 home/);
+  }
 });

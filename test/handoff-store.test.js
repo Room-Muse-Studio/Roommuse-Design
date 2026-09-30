@@ -150,3 +150,13 @@ test('createStore picks Redis from either env naming, memory locally, and refuse
   assert.equal(createStore({ UPSTASH_REDIS_REST_URL: 'https://r', UPSTASH_REDIS_REST_TOKEN: 't' }).kind, 'redis');
   assert.throws(() => createStore({ VERCEL: '1' }), /No Redis configured/);
 });
+
+test('redis: a whole home is stored and comes back intact, with the 24-hour expiry', async () => {
+  const upstash = fakeUpstash();
+  const store = new RedisHandoffStore({ url: 'https://redis.test', token: 'secret', fetch: upstash.fetch });
+  const home = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'samples', 'twobedroom.roomscan.json'), 'utf8'));
+  const entry = await storeScan(store, home);
+  const found = await fetchScan(store, entry.code);
+  assert.deepEqual(found.scan, home);
+  assert.equal(found.expiresAt - found.createdAt, 24 * 60 * 60 * 1000);
+});
