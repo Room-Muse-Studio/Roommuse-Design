@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   ALPHABET,
   MemoryHandoffStore,
@@ -14,49 +16,7 @@ const {
   handoffUrl,
 } = require('../server/handoff-store');
 
-/** Just enough of Upstash's REST /pipeline endpoint to run the store against. */
-function fakeUpstash({ token = 'secret', now = () => Date.now() } = {}) {
-  const data = new Map(); // key → { value, expiresAt }
-  const live = (key) => {
-    const v = data.get(key);
-    if (v && v.expiresAt && v.expiresAt <= now()) { data.delete(key); return null; }
-    return v || null;
-  };
-  const run = ([cmd, key, ...args]) => {
-    switch (cmd.toUpperCase()) {
-      case 'PING': return 'PONG';
-      case 'GET': { const v = live(key); return v ? v.value : null; }
-      case 'SET': {
-        const opts = args.slice(1).map(String);
-        if (opts.includes('NX') && live(key)) return null;
-        const ex = opts.indexOf('EX'), px = opts.indexOf('PX');
-        const ttl = ex >= 0 ? Number(opts[ex + 1]) * 1000 : px >= 0 ? Number(opts[px + 1]) : 0;
-        data.set(key, { value: String(args[0]), expiresAt: ttl ? now() + ttl : 0 });
-        return 'OK';
-      }
-      case 'INCR': {
-        const v = live(key) || { value: '0', expiresAt: 0 };
-        v.value = String(Number(v.value) + 1);
-        data.set(key, v);
-        return Number(v.value);
-      }
-      default: return { error: `unknown command ${cmd}` };
-    }
-  };
-  const calls = [];
-  async function fetch(url, init) {
-    calls.push({ url, init });
-    if (init.headers.authorization !== `Bearer ${token}`) {
-      return { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) };
-    }
-    const body = JSON.parse(init.body).map((c) => {
-      const r = run(c);
-      return r && r.error ? r : { result: r };
-    });
-    return { ok: true, status: 200, json: async () => body };
-  }
-  return { fetch, data, calls };
-}
+const { fakeUpstash } = require('./helpers/fake-upstash');
 
 const scan = { schema: 'mozu.roomscan/1', polygon: [{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 1, z: 1 }], fixtures: [] };
 
@@ -154,38 +114,14 @@ test('createStore picks Redis from either env naming, memory locally, and refuse
 test('redis: a whole home is stored and comes back intact, with the 24-hour expiry', async () => {
   const upstash = fakeUpstash();
   const store = new RedisHandoffStore({ url: 'https://redis.test', token: 'secret', fetch: upstash.fetch });
-  const home = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'samples', 'twobedroom.roomscan.json'), 'utf8'));
+  const home = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'samples', 'twobedroom.roomscan.json'), 'utf8'));
   const entry = await storeScan(store, home);
   const found = await fetchScan(store, entry.code);
   assert.deepEqual(found.scan, home);
   assert.equal(found.expiresAt - found.createdAt, 24 * 60 * 60 * 1000);
 });
 
-for (const [name, make] of [
-  ['memory', (now) => new MemoryHandoffStore({ now })],
-  ['redis', (now) => new RedisHandoffStore({ url: 'https://redis.test', token: 'secret', fetch: fakeUpstash({ now }).fetch })],
-]) {
-  test(`${name}: a design is stored and never expires; keeping a code makes its scan permanent`, async () => {
-    let t = Date.now();
-    const store = make(() => t);
-    const entry = await storeScan(store, scan, t);
-    assert.equal(await store.getDesign(entry.code), null);
-    const design = { version: 1, items: [{ uid: 1 }], savedAt: 'now' };
-    await store.setDesign(entry.code, design);
-    await store.keep(entry.code);
-    t += 30 * 24 * 60 * 60 * 1000; // a month later
-    const found = await store.get(entry.code);
-    assert.ok(found, 'the scan is still there');
-    assert.equal(found.expiresAt, null);
-    assert.deepEqual(await store.getDesign(entry.code), design);
-  });
-
-  test(`${name}: a scan without a saved design still expires`, async () => {
-    let t = Date.now();
-    const store = make(() => t);
-    const entry = await storeScan(store, scan, t);
-    t += 25 * 60 * 60 * 1000;
-    // (The Redis store double-checks against the real clock too; the fake Redis drops the key.)
-    assert.equal(await store.get(entry.code), null);
-  });
-}
+test('a code carries nothing but its scan: the store has no design methods', () => {
+  const store = new MemoryHandoffStore();
+  for (const gone of ['keep', 'getDesign', 'setDesign']) assert.equal(typeof store[gone], 'undefined', gone);
+});

@@ -6,6 +6,9 @@
  *   GET  /api/scan-handoff?code=XXXXXX  page fetches it back   → 200 { code, scan, expiresAt }
  *   GET  /api/health                    store reachable?       → 200 { ok, store } / 503
  *
+ * A code only carries the scan, for 24 hours. Designs live in projects
+ * (server/project-api.js), which a signed-in person creates from a code.
+ *
  * Errors are always { error } with a sentence a person can act on; the iPad app
  * shows that text as-is (apps/ios/MozuScanner/Export/Handoff.swift).
  */
@@ -16,16 +19,16 @@ const { pathToFileURL } = require('node:url');
 const {
   MAX_SCAN_BYTES,
   HANDOFF_TTL_MS,
-  MAX_DESIGN_BYTES,
   createStore,
   storeScan,
   fetchScan,
   handoffUrl,
   normaliseCode,
 } = require('./handoff-store');
+const { sendJson, originOf, clientIp, readBody } = require('./http');
+const { createRateLimiter, numberFrom, unavailable } = require('./rate-limit');
 
 const SDK_FILE = path.join(__dirname, '..', 'packages', 'scan-sdk', 'dist', 'mozu-scan-sdk.js');
-const RATE_WINDOW_MS = 10 * 60 * 1000;
 
 // ── scan validation ────────────────────────────────────────────────────────
 
@@ -76,73 +79,18 @@ async function parseHome(raw) {
   return { home: { schema: HOMESCAN, rooms, capturedAt: typeof raw.capturedAt === 'string' ? raw.capturedAt : rooms[0].capturedAt }, warnings };
 }
 
-// ── HTTP helpers ───────────────────────────────────────────────────────────
-
-function sendJson(res, status, body, headers = {}) {
-  const text = JSON.stringify(body);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(text),
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-    ...headers,
-  });
-  res.end(text);
-}
-
-const firstHeader = (v) => String(v || '').split(',')[0].trim();
-
-/** Public origin, honouring the proxy in front (Vercel, Cloudflare tunnel). */
-function originOf(req) {
-  const proto = firstHeader(req.headers['x-forwarded-proto']) || (req.socket && req.socket.encrypted ? 'https' : 'http');
-  const host = firstHeader(req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
-  return `${proto}://${host}`;
-}
-
-function clientIp(req) {
-  return firstHeader(req.headers['x-real-ip']) ||
-    firstHeader(req.headers['x-forwarded-for']) ||
-    (req.socket && req.socket.remoteAddress) || 'unknown';
-}
-
-function readBody(req, limit) {
-  return new Promise((resolve, reject) => {
-    const declared = Number(req.headers['content-length']);
-    if (Number.isFinite(declared) && declared > limit) {
-      req.resume(); // discard the body so the client reads the 413 instead of a reset connection
-      reject(Object.assign(new Error('Scan is too large.'), { status: 413 }));
-      return;
-    }
-    let size = 0;
-    const chunks = [];
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > limit) {
-        reject(Object.assign(new Error('Scan is too large.'), { status: 413 }));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
-}
-
 // ── API ────────────────────────────────────────────────────────────────────
 
 /**
  * Build the API handlers around one store.
  *   options.store   — a store from handoff-store.js; default createStore() on first use
- *   options.limits  — { uploads, lookups, edits } per IP per 10 minutes; 0 turns a limit off
+ *   options.limits  — { uploads, lookups } per IP per 10 minutes; 0 turns a limit off
  */
 function createHandoffApi(options = {}) {
   let store = options.store || null;
   const limits = {
     uploads: numberFrom(process.env.RATE_LIMIT_UPLOADS, 20),
     lookups: numberFrom(process.env.RATE_LIMIT_LOOKUPS, 60),
-    // Saving and checking for other people's saves: a busy editor makes a few hundred of these.
-    edits: numberFrom(process.env.RATE_LIMIT_EDITS, 1200),
     ...options.limits,
   };
   const ttlMs = options.ttlMs || HANDOFF_TTL_MS;
@@ -153,27 +101,9 @@ function createHandoffApi(options = {}) {
     return store;
   }
 
-  /** True when this request may go ahead. Fails open: a counter outage never blocks scans. */
-  async function allowed(req, kind) {
-    const limit = limits[kind];
-    if (!limit) return true;
-    try {
-      return (await getStore().hit(`${kind}:${clientIp(req)}`, RATE_WINDOW_MS)) <= limit;
-    } catch (e) {
-      console.error('[mozu] rate limit check failed:', e.message);
-      return true;
-    }
-  }
-
-  function tooMany(res) {
-    return sendJson(res, 429, { error: 'Too many requests from this network. Wait a few minutes and try again.' },
-      { 'retry-after': String(RATE_WINDOW_MS / 1000) });
-  }
-
-  function unavailable(res, e) {
-    console.error('[mozu] store error:', e.message);
-    return sendJson(res, 503, { error: 'MOZU could not reach its storage just now. Try again in a minute.' });
-  }
+  const rate = createRateLimiter(getStore, limits);
+  const allowed = (req, kind) => rate.allowed(kind, clientIp(req));
+  const tooMany = (res) => rate.tooMany(res);
 
   async function post(req, res) {
     if (!(await allowed(req, 'uploads'))) return tooMany(res);
@@ -200,7 +130,7 @@ function createHandoffApi(options = {}) {
 
     let entry;
     try {
-      entry =await storeScan(getStore(), scan, Date.now(), ttlMs);
+      entry = await storeScan(getStore(), scan, Date.now(), ttlMs);
     } catch (e) {
       return unavailable(res, e);
     }
@@ -220,7 +150,7 @@ function createHandoffApi(options = {}) {
     if (!normaliseCode(input)) return sendJson(res, 400, { error: 'Enter the 6-character code shown in the MOZU Scanner app.' });
     let found;
     try {
-      found =await fetchScan(getStore(), input);
+      found = await fetchScan(getStore(), input);
     } catch (e) {
       return unavailable(res, e);
     }
@@ -228,8 +158,7 @@ function createHandoffApi(options = {}) {
     return sendJson(res, 200, {
       code: found.code,
       scan: found.scan,
-      // null once a design has been saved: the code no longer expires.
-      expiresAt: found.expiresAt === null ? null : new Date(found.expiresAt).toISOString(),
+      expiresAt: new Date(found.expiresAt).toISOString(),
     });
   }
 
@@ -248,56 +177,6 @@ function createHandoffApi(options = {}) {
   }
 
   /** /api/health */
-  // ── designs ──────────────────────────────────────────────────────────
-  //
-  //   GET /api/design?code=     → { code, design: { version, items, savedAt } | null }
-  //   PUT /api/design?code=  { items }  → { version, savedAt }
-  //
-  // Anyone with the code can save, several people at once; each save replaces
-  // the design (the latest save wins) and bumps its version, which is how open
-  // pages notice someone else's changes. Saving keeps the code for good.
-
-  async function design(req, res) {
-    const url = new URL(req.url, 'http://localhost');
-    try {
-      if (!(await allowed(req, 'edits'))) return tooMany(res);
-      const code = normaliseCode(url.searchParams.get('code') || '');
-      if (!code) return sendJson(res, 400, { error: 'Enter the 6-character code shown in the MOZU Scanner app.' });
-      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'PUT') {
-        return sendJson(res, 405, { error: 'Use GET to load a design or PUT to save one.' }, { allow: 'GET, PUT' });
-      }
-      let body = null;
-      if (req.method === 'PUT') {
-        let text;
-        try {
-          text = await readBody(req, MAX_DESIGN_BYTES);
-        } catch (e) {
-          return sendJson(res, e.status || 400, { error: e.status === 413 ? 'The design is too large to save (limit 2 MB).' : 'Could not read the request.' });
-        }
-        try { body = JSON.parse(text); } catch { body = null; }
-        if (!body || !Array.isArray(body.items)) return sendJson(res, 400, { error: 'A design needs items (a list).' });
-      }
-      const store = getStore();
-      try {
-        if (!(await store.get(code))) {
-          return sendJson(res, 404, { error: 'That code was not found or has expired (codes last 24 hours unless a design is saved).' });
-        }
-        if (!body) return sendJson(res, 200, { code, design: await store.getDesign(code) });
-        const current = await store.getDesign(code);
-        const saved = { version: (current ? current.version : 0) + 1, items: body.items, savedAt: new Date().toISOString() };
-        await store.setDesign(code, saved);
-        await store.keep(code); // a saved design keeps its scan, and its code, for good
-        return sendJson(res, 200, { version: saved.version, savedAt: saved.savedAt });
-      } catch (e) {
-        return unavailable(res, e);
-      }
-    } catch (e) {
-      console.error('[mozu]', e);
-      if (!res.headersSent) return sendJson(res, 500, { error: 'Server error.' });
-      res.end();
-    }
-  }
-
   async function health(req, res) {
     try {
       const s = getStore();
@@ -309,7 +188,7 @@ function createHandoffApi(options = {}) {
     }
   }
 
-  return { handoff, design, health, getStore };
+  return { handoff, health, getStore };
 }
 
 /**
@@ -324,9 +203,4 @@ function scanLinkLocation(pathname, search) {
   return '/' + (query.toString() ? '?' + query : '');
 }
 
-function numberFrom(value, fallback) {
-  const n = Number(value);
-  return value !== undefined && value !== '' && Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-module.exports = { createHandoffApi, scanLinkLocation, parseScan, parseHome, sendJson, originOf, clientIp, readBody };
+module.exports = { createHandoffApi, scanLinkLocation, parseScan, parseHome, HOMESCAN, ROOMSCAN, sendJson, originOf, clientIp, readBody };

@@ -1,18 +1,21 @@
 /*
  * MOZU design server — no dependencies, plain Node. For local use (`npm start`);
- * production runs the same API as Vercel functions (api/*.js, vercel.json).
+ * production runs the same API as Vercel functions (api/**\/*.js, vercel.json).
  *
  *   GET  /                              the site: the configurator, built into public/ (npm run build)
+ *   GET  /projects, /editor, …          the site's other pages (Next's static export writes <route>.html)
  *   GET  /packages/scan-sdk/dist/*      the scan SDK, so the page can load it
  *   GET  /scan, /scan/:code             what the iPad app links to → redirected to the page
  *   POST /api/scan-handoff              iPad uploads a RoomScan → { code, url, expiresAt }
  *   GET  /api/scan-handoff?code=XXXXXX  page fetches it back   → { code, scan, expiresAt }
- *   GET/PUT /api/design?code=…          the design saved under a code (anyone with the code can save)
+ *   *    /api/auth/*                    sign in / who am I / sign out (server/auth-api.js)
+ *   *    /api/projects[/…]              a signed-in person's projects (server/project-api.js)
  *   GET  /api/health                    store reachable?
  *
  * The request/response shape matches apps/ios/MozuScanner/Export/Handoff.swift
- * (ScanHandoff.send), so the iPad app needs no changes. Codes are kept in memory
- * unless KV_REST_API_URL / KV_REST_API_TOKEN point at a Redis database.
+ * (ScanHandoff.send), so the iPad app needs no changes. Codes, sessions and
+ * projects are kept in memory unless KV_REST_API_URL / KV_REST_API_TOKEN point
+ * at a Redis database.
  */
 'use strict';
 
@@ -20,6 +23,9 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHandoffApi, scanLinkLocation, sendJson } = require('./handoff-api');
+const { createAppStore } = require('./app-store');
+const { createAuthApi } = require('./auth-api');
+const { createProjectApi } = require('./project-api');
 
 const ROOT = path.resolve(__dirname, '..');
 // The built site: the configurator's static export plus the SDK (scripts/build-web.js),
@@ -60,11 +66,26 @@ function serveFile(res, baseDir, relPath, method) {
 }
 
 /**
- * Build the server. `options` go to createHandoffApi (tests pass their own store
- * and limits); `options.webDir` overrides where the site is served from.
+ * A page of the built site. Next's static export writes `/projects` as
+ * `projects.html` (or `projects/index.html`), and Vercel serves those at the
+ * clean URL (vercel.json `cleanUrls`); this does the same locally.
+ */
+function servePage(res, webDir, p, method) {
+  if (serveFile(res, webDir, p === '/' ? 'index.html' : p, method)) return true;
+  if (path.posix.extname(p)) return false;
+  const route = p.replace(/\/+$/, '');
+  return !!route && (serveFile(res, webDir, `${route}.html`, method) || serveFile(res, webDir, `${route}/index.html`, method));
+}
+
+/**
+ * Build the server. One store serves the handoff codes, sessions and projects.
+ * Tests pass their own `store`, `verifier`, `limits` and `webDir`.
  */
 function createServer(options = {}) {
-  const api = createHandoffApi(options);
+  const store = options.store || createAppStore();
+  const api = createHandoffApi({ ...options, store });
+  const auth = createAuthApi({ store, verifier: options.verifier, limits: options.limits });
+  const projects = createProjectApi({ store, auth, limits: options.limits, maxBytes: options.maxProjectBytes, maxProjects: options.maxProjects });
   const webDir = options.webDir || WEB_DIR;
 
   return http.createServer(async (req, res) => {
@@ -73,8 +94,9 @@ function createServer(options = {}) {
     try { p = decodeURIComponent(url.pathname); } catch { p = url.pathname; }
     try {
       if (p === '/api/scan-handoff' || p === '/api/scan-handoff/') return await api.handoff(req, res);
-      if (p === '/api/design' || p === '/api/design/') return await api.design(req, res);
       if (p === '/api/health') return await api.health(req, res);
+      if (p.startsWith('/api/auth/')) return await auth.handle(req, res);
+      if (p === '/api/projects' || p.startsWith('/api/projects/')) return await projects.handle(req, res);
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed.' });
 
       // Links from the iPad: /scan/B7K4M2 (code screen) and /scan?poly=…&scan=… (open on this iPad).
@@ -86,7 +108,7 @@ function createServer(options = {}) {
 
       if (p.startsWith('/packages/scan-sdk/dist/')) {
         if (serveFile(res, SDK_DIR, p.slice('/packages/scan-sdk/dist/'.length), req.method)) return;
-      } else if (serveFile(res, webDir, p === '/' ? 'index.html' : p, req.method)) {
+      } else if (servePage(res, webDir, p, req.method)) {
         return;
       } else if (p === '/' || p === '/index.html') {
         res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' });
@@ -120,6 +142,7 @@ if (require.main === module) {
 
   server.listen(PORT, HOST, () => {
     console.log(`[mozu] serving ${path.relative(process.cwd(), WEB_DIR) || WEB_DIR} at http://localhost:${PORT}/`);
-    console.log(`[mozu] handoff API at http://localhost:${PORT}/api/scan-handoff (codes last 24 hours, kept in ${storeKind})`);
+    console.log(`[mozu] handoff API at http://localhost:${PORT}/api/scan-handoff (codes last 24 hours; codes, sessions and projects kept in ${storeKind})`);
+    if (!process.env.FIREBASE_PROJECT_ID) console.log('[mozu] FIREBASE_PROJECT_ID is not set: sign-in answers 503 until it is');
   });
 }

@@ -4,15 +4,16 @@
  * Matches mozu-configurator/src/systems/handoff/scanHandoff.ts: six characters
  * from an unambiguous alphabet, valid for 24 hours, forgiving of how people type.
  *
- * A code can also carry a saved design (the edits made in the configurator).
- * Designs never expire, and saving one makes its scan permanent too, so the
- * code keeps working. Anyone with the code can save; the latest save wins.
+ * A code only carries a scan. Anyone with the code can fetch the scan (that is
+ * the point: type it on the laptop) and, signed in, turn it into a project of
+ * their own (server/project-api.js). The code keeps its 24-hour expiry either way.
  *
  * Two stores share one async interface:
  *   MemoryHandoffStore — `npm start` on a laptop; codes live as long as the process.
  *   RedisHandoffStore  — production (Vercel + Upstash Redis). Every server
  *                        instance sees the same codes, and they survive redeploys.
- * createStore() picks one from the environment.
+ * createStore() picks one from the environment. server/app-store.js extends both
+ * with users, sessions and projects.
  */
 'use strict';
 
@@ -25,8 +26,6 @@ const HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SCAN_BYTES = 2_000_000;
 const KEY_PREFIX = 'mozu:handoff:';
 const RATE_PREFIX = 'mozu:rate:';
-const DESIGN_PREFIX = 'mozu:design:';
-const MAX_DESIGN_BYTES = 2_000_000;
 
 function newCode() {
   const bytes = crypto.randomBytes(CODE_LENGTH);
@@ -56,13 +55,8 @@ function normaliseCode(input) {
 // Interface (all async):
 //   claim(code, entry, ttlMs) → true if stored, false if the code was taken
 //   get(code)                 → entry or null (expired entries are null)
-//   keep(code)                → make the code's scan permanent (no expiry)
-//   getDesign(code)           → { version, items, savedAt } or null
-//   setDesign(code, design)   → store it, forever
 //   hit(bucket, windowMs)     → how many times `bucket` was hit in this window
 //   ping()                    → true when the store is reachable
-//
-// An entry whose `expiresAt` is null never expires.
 
 class MemoryHandoffStore {
   constructor({ now = () => Date.now() } = {}) {
@@ -70,7 +64,6 @@ class MemoryHandoffStore {
     this.now = now;
     this.entries = new Map();
     this.counters = new Map();
-    this.designs = new Map();
   }
 
   async claim(code, entry) {
@@ -83,24 +76,11 @@ class MemoryHandoffStore {
   async get(code) {
     const found = this.entries.get(code);
     if (!found) return null;
-    if (found.expiresAt !== null && found.expiresAt <= this.now()) {
+    if (found.expiresAt <= this.now()) {
       this.entries.delete(code);
       return null;
     }
     return found;
-  }
-
-  async keep(code) {
-    const found = await this.get(code);
-    if (found) found.expiresAt = null;
-  }
-
-  async getDesign(code) {
-    return this.designs.get(code) ?? null;
-  }
-
-  async setDesign(code, design) {
-    this.designs.set(code, design);
   }
 
   async hit(bucket, windowMs) {
@@ -118,7 +98,7 @@ class MemoryHandoffStore {
   }
 
   sweep(now = this.now()) {
-    for (const [code, entry] of this.entries) if (entry.expiresAt !== null && entry.expiresAt <= now) this.entries.delete(code);
+    for (const [code, entry] of this.entries) if (entry.expiresAt <= now) this.entries.delete(code);
     for (const [bucket, c] of this.counters) if (c.resetAt <= now) this.counters.delete(bucket);
   }
 
@@ -171,25 +151,8 @@ class RedisHandoffStore {
     if (typeof text !== 'string') return null;
     let entry;
     try { entry = JSON.parse(text); } catch { return null; }
-    if (!entry || (entry.expiresAt !== null && entry.expiresAt <= Date.now())) return null;
+    if (!entry || entry.expiresAt <= Date.now()) return null;
     return entry;
-  }
-
-  async keep(code) {
-    const entry = await this.get(code);
-    if (!entry || entry.expiresAt === null) return;
-    // A SET without an expiry also clears the key's TTL.
-    await this.command(['SET', KEY_PREFIX + code, JSON.stringify({ ...entry, expiresAt: null })]);
-  }
-
-  async getDesign(code) {
-    const text = await this.command(['GET', DESIGN_PREFIX + code]);
-    if (typeof text !== 'string') return null;
-    try { return JSON.parse(text); } catch { return null; }
-  }
-
-  async setDesign(code, design) {
-    await this.command(['SET', DESIGN_PREFIX + code, JSON.stringify(design)]);
   }
 
   async hit(bucket, windowMs) {
@@ -250,7 +213,6 @@ module.exports = {
   CODE_LENGTH,
   HANDOFF_TTL_MS,
   MAX_SCAN_BYTES,
-  MAX_DESIGN_BYTES,
   MemoryHandoffStore,
   RedisHandoffStore,
   createStore,
