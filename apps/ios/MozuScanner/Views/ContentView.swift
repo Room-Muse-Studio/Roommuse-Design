@@ -6,9 +6,6 @@ import RoomPlan
 import SwiftUI
 
 struct ContentView: View {
-    /// How the App Clip was opened (session id from the QR code); nil in the full app.
-    var invocation: ClipInvocation? = nil
-
     @StateObject private var controller = RoomCaptureController()
     /// On a device without LiDAR: the sample room opened from the unsupported screen.
     @State private var sampleRoom: RoomScan?
@@ -18,14 +15,14 @@ struct ContentView: View {
             Group {
                 if !RoomCaptureSession.isSupported {
                     if let sampleRoom {
-                        FloorplanResultView(scan: sampleRoom, session: invocation?.session) { self.sampleRoom = nil }
+                        FloorplanResultView(scan: sampleRoom) { self.sampleRoom = nil }
                     } else {
                         UnsupportedView { sampleRoom = .sampleKitchen() }
                     }
                 } else {
                     switch controller.phase {
                     case .done(let scans) where scans.count == 1:
-                        FloorplanResultView(scan: scans[0], session: invocation?.session) { controller.reset() }
+                        FloorplanResultView(scan: scans[0]) { controller.reset() }
                     case .done(let scans) where scans.count > 1:
                         HouseResultView(scans: scans) { controller.reset() }
                     case .done:

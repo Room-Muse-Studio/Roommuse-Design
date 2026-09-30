@@ -1,4 +1,4 @@
-# XcodeGen spec for the MOZU Scanner iOS app and its App Clip.
+# XcodeGen spec for the MOZU Scanner iOS app.
 # Generates MozuScanner.xcodeproj with every Swift source compiled and the
 # Textures + Models bundled as loose resources (the way the code loads them).
 #
@@ -9,15 +9,6 @@
 #
 # Then set your signing Team in the target's Signing & Capabilities and run on
 # an iPad (a LiDAR iPad Pro is required only for the RoomPlan scan step).
-#
-# Two targets share one source tree:
-#   MozuScanner      the full app: scan → floorplan → send, plus the 3D design room
-#   MozuScannerClip  the App Clip: scan → floorplan → send only (no Design/, no
-#                    USDZ models or HDR, so it stays under Apple's clip size limit).
-#                    Compiled with the APPCLIP flag; see apps/ios/README.md.
-# Signing an App Clip needs a paid Apple Developer team (App Clips and
-# Associated Domains aren't available to a free Personal Team). Both targets
-# still compile with CODE_SIGNING_ALLOWED=NO.
 
 name: MozuScanner
 options:
@@ -32,7 +23,7 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    # Set your Apple Developer team here (or in the Xcode UI):
+    # Set your free/paid Apple Developer team here (or in the Xcode UI):
     DEVELOPMENT_TEAM: ""
 
 targets:
@@ -57,64 +48,13 @@ targets:
       - path: MozuScanner/Resources/Studio.skybox
         type: file
         buildPhase: resources
-      # App icon for the full app (placeholder artwork; replace before App Store submission).
-      - path: Shared/Assets.xcassets
-    dependencies:
-      # Embeds the clip in the app bundle (AppClips/MozuScannerClip.app).
-      - target: MozuScannerClip
-    entitlements:
-      path: MozuScanner/MozuScanner.entitlements
-      properties:
-        com.apple.developer.associated-appclip-app-identifiers:
-          - $(AppIdentifierPrefix)com.averyhsu.roommuse.Clip
-        # Shared container: the clip leaves the last scan code here for the full app.
-        com.apple.security.application-groups:
-          - group.com.averyhsu.roommuse
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.averyhsu.roommuse
         INFOPLIST_FILE: MozuScanner/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_PREVIEWS: YES
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     # RealityKit / ARKit / RoomPlan are system frameworks; auto-linked from imports.
-
-  MozuScannerClip:
-    type: application.on-demand-install-capable
-    platform: iOS
-    sources:
-      # The scan path, shared with the full app. Nothing here loads bundle resources.
-      - MozuScanner/Models
-      - MozuScanner/Scan
-      - MozuScanner/Floorplan
-      - MozuScanner/Export/Handoff.swift
-      - MozuScanner/Export/ClipInvocation.swift
-      - MozuScanner/Views
-      # Clip-only: entry point, Info.plist, icon.
-      - path: MozuScannerClip
-        excludes:
-          - "Info.plist"
-          - "**/*.md"
-    entitlements:
-      path: MozuScannerClip/MozuScannerClip.entitlements
-      properties:
-        com.apple.developer.on-demand-install-capable: true
-        com.apple.developer.parent-application-identifiers:
-          - $(AppIdentifierPrefix)com.averyhsu.roommuse
-        # The domain that serves /.well-known/apple-app-site-association (see
-        # apps/web/.well-known). Change this if the site moves to a custom domain.
-        com.apple.developer.associated-domains:
-          - appclips:roommuse-design.vercel.app
-        com.apple.security.application-groups:
-          - group.com.averyhsu.roommuse
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.averyhsu.roommuse.Clip
-        INFOPLIST_FILE: MozuScannerClip/Info.plist
-        GENERATE_INFOPLIST_FILE: NO
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) APPCLIP
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        SKIP_INSTALL: YES
 
 schemes:
   MozuScanner:
@@ -131,26 +71,6 @@ schemes:
       # TestFlight / App Store builds never enable validation, so this is debug-only.
       enableGPUValidationMode: false
       enableGPUFrameCaptureMode: disabled
-    profile:
-      config: Release
-    analyze:
-      config: Debug
-    archive:
-      config: Release
-
-  MozuScannerClip:
-    build:
-      targets:
-        MozuScannerClip: all
-    run:
-      config: Debug
-      # Same RoomCaptureView / Metal validation workaround as the app scheme.
-      enableGPUValidationMode: false
-      enableGPUFrameCaptureMode: disabled
-      # Xcode passes this to the clip as its invocation URL when run from Xcode,
-      # so the session parsing can be exercised without a QR code.
-      environmentVariables:
-        _XCAppClipURL: https://roommuse-design.vercel.app/clip?s=DEVTEST0
     profile:
       config: Release
     analyze:

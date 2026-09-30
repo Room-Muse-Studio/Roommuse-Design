@@ -13,8 +13,8 @@ RoomPlan scan ─▶ CapturedRoom ─▶ FloorplanBuilder ─▶ RoomScan ─▶
 ```
 
 > ⚠️ **Build in Xcode on a Mac.** RoomPlan is iOS-only and needs a LiDAR device;
-> it does not run in the Simulator. On a phone without LiDAR the app opens with a
-> sample room so the floorplan and send flow can still be tried.
+> it does not run in the Simulator and can't be compiled in this Linux container.
+> The sources below are complete and organized as an app target.
 
 ## Requirements
 
@@ -23,26 +23,15 @@ RoomPlan scan ─▶ CapturedRoom ─▶ FloorplanBuilder ─▶ RoomScan ─▶
 
 ## Set up the Xcode project
 
-The project file is generated from [`project.yml`](./project.yml) by XcodeGen
-(`brew install xcodegen`), so it is not committed:
-
-```bash
-cd apps/ios
-xcodegen generate
-open MozuScanner.xcodeproj
-```
-
-Re-run `xcodegen generate` whenever Swift files are added or removed. Pick your
-Team under **Signing & Capabilities** and run the **MozuScanner** scheme on a
-device. The full install walkthrough (Developer Mode, trusting the profile) is in
-the [root README](../../README.md).
-
-Two targets come out of the spec:
-
-| Target | Scheme | What it is |
-| --- | --- | --- |
-| `MozuScanner` | MozuScanner | The full app: scan → floorplan → send, plus the 3D design room (`Design/`, USDZ models, HDR). |
-| `MozuScannerClip` | MozuScannerClip | The **App Clip**: the same scan → floorplan → send flow, launched from a link or QR code with nothing to install. See [App Clip](#app-clip) below. |
+1. Xcode → New → **App** (SwiftUI, Swift). Name it `MozuScanner`.
+2. Delete the generated `ContentView.swift` / `…App.swift` and **add the
+   `MozuScanner/` folder** from here (App, Models, Scan, Floorplan, Views,
+   Export) to the target.
+3. Set the target's Info.plist to [`MozuScanner/Info.plist`](./MozuScanner/Info.plist)
+   (it has the required **Camera Usage Description**), or copy those keys in.
+4. Add the **RoomPlan** framework (it's a system framework — `import RoomPlan`
+   resolves once the deployment target is iOS 17+).
+5. Run on a real LiDAR device.
 
 ## Socket detection (on device)
 
@@ -93,76 +82,8 @@ web app, the browser extensions, and this app all produce an identical floorplan
 | `Scan/FloorplanBuilder.swift` | `CapturedRoom` → ordered polygon + openings + objects |
 | `Floorplan/Floorplan.swift` | pure dimensioning engine (Swift twin of the SDK) |
 | `Floorplan/FloorplanCanvas.swift` | SwiftUI plan renderer (the "2 Floorplan" view) |
-| `Views/*` | scan / result / app flow (shared with the clip; `#if APPCLIP` hides what the clip can't do) |
-| `Export/Handoff.swift` | `/scan` deep link, `ScanHandoff.send` upload → 6-character code |
-| `Export/ClipInvocation.swift` | parses the App Clip's invocation URL (`/clip?s=…`) |
-| `Design/**` | 3D design room, AR placement, pricing, photoreal render — full app only |
-| `Resources/**` | USDZ furniture models + `Studio.skybox` HDR — full app only |
-| `MozuScannerClip/` | the clip's `@main`, `Info.plist`, entitlements and icon |
-| `Shared/Assets.xcassets` | the full app's icon (placeholder artwork) |
-
-## App Clip
-
-An App Clip is a small slice of the app that iOS runs **without installing anything
-from the App Store**: a person scans a QR code or taps a link, a card slides up,
-they tap **Open**, and MOZU Scan starts. The website's `/clip` page is that link
-(`apps/web/clip/index.html`).
-
-**What the clip contains.** Only the scan path: `Models`, `Scan`, `Floorplan`,
-`Export/Handoff.swift`, `Export/ClipInvocation.swift` and `Views`, compiled with
-the `APPCLIP` flag (`SWIFT_ACTIVE_COMPILATION_CONDITIONS` in `project.yml`).
-Under that flag `FloorplanResultView` and `HouseResultView` replace the
-"Design room" button with a "Get the full MOZU app" overlay (`SKOverlay`), and
-hide the share sheet and the Advanced server-address field (clips can't use the
-local network; they always talk to production). Nothing in `Design/` or
-`Resources/` is compiled or bundled, which keeps the clip far under Apple's
-15 MB limit (a debug build is about 2.3 MB).
-
-**How it launches.** The invocation URL is `https://<domain>/clip?s=<session>`.
-`ClipApp.swift` receives it through `onContinueUserActivity` and
-`ClipInvocation.parse` reads the optional session id; `ScanHandoff.send` echoes
-it in the upload as `"session"` so a laptop page that showed the QR code can load
-the room by itself (server support for that lookup is a follow-up; today the
-6-character code still works exactly as in the full app). After a send, the clip
-also stores the ticket in the shared app group `group.com.averyhsu.roommuse`, so
-the full app can show "your last scan code" after an upgrade.
-
-**Building.** Both targets compile on any Mac with Xcode:
-
-```bash
-cd apps/ios && xcodegen generate
-xcodebuild -project MozuScanner.xcodeproj -scheme MozuScannerClip \
-  -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
-```
-
-The `MozuScannerClip` scheme sets `_XCAppClipURL` so running it from Xcode on a
-device exercises the invocation parsing without a QR code.
-
-**What only the account owner can do.** None of this can ship on a free Apple ID:
-
-1. **Join the Apple Developer Program** ($99/year). App Clips and Associated
-   Domains aren't available to a free Personal Team, so the clip can't even be
-   signed for a device until then. Put the paid team's ID in `DEVELOPMENT_TEAM`.
-2. **Domain.** The clip's `associated-domains` entitlement and the website's
-   `.well-known/apple-app-site-association` file must name the same domain,
-   and the file must list the Team ID (see `apps/web/.well-known/README.md`).
-   Apple bakes the domain into the reviewed build, so pick the final one first
-   (a custom domain is recommended over `roommuse-design.vercel.app`).
-3. **A LiDAR device** to test scanning inside the clip. Apple documents ARKit in
-   clips; RoomPlan specifically should be confirmed on a device before App
-   Store work starts. Test without publishing via Xcode, then on the device:
-   **Settings → Developer → Local Experiences → Register Local Experience**,
-   URL prefix `https://<domain>/clip`, bundle id `com.averyhsu.roommuse.Clip`;
-   scan a QR code of that URL with the Camera app and the debug clip launches.
-4. **App Store Connect.** The clip ships inside the full app and only launches
-   from links once the app is on the App Store: create the app record, set the
-   default App Clip experience (header image 1800×1200, title, subtitle,
-   "Open"), an advanced experience for the `/clip` URL prefix, put the app's
-   numeric id into the Smart App Banner tag in `apps/web/clip/index.html`, and
-   submit both for review. Replace the placeholder icons in `Shared/Assets.xcassets`
-   and `MozuScannerClip/Assets.xcassets` first.
-5. **Size check.** Product → Archive → Distribute → App Thinning Size Report;
-   Xcode refuses to archive a clip over the limit.
+| `Views/*` | scan / result / app flow |
+| `Export/Handoff.swift` | `/scan` deep link + share |
 
 ## Why native on iPhone
 

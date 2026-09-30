@@ -39,25 +39,14 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-/** Apple's App Clip association file has no extension but must be served as JSON. */
-function mimeFor(file) {
-  if (path.basename(file) === 'apple-app-site-association') return 'application/json';
-  return MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-}
-
 function serveFile(res, baseDir, relPath, method) {
-  let file = path.resolve(baseDir, '.' + path.posix.normalize('/' + relPath));
+  const file = path.resolve(baseDir, '.' + path.posix.normalize('/' + relPath));
   if (!file.startsWith(baseDir + path.sep) && file !== baseDir) return false;
   let stat;
   try { stat = fs.statSync(file); } catch { return false; }
-  // A folder such as /clip serves its index.html, as Vercel does.
-  if (stat.isDirectory()) {
-    file = path.join(file, 'index.html');
-    try { stat = fs.statSync(file); } catch { return false; }
-  }
   if (!stat.isFile()) return false;
   res.writeHead(200, {
-    'content-type': mimeFor(file),
+    'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     'content-length': stat.size,
     'cache-control': 'no-cache',
     'x-content-type-options': 'nosniff',
