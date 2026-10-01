@@ -12,6 +12,7 @@ import {
   type Item, type Slot,
 } from '@/lib/items';
 import { buildItem, positionItem } from '@/lib/itemMesh';
+import { ItemOutline } from '@/lib/outline';
 import { containsPoint } from '@/lib/walls';
 import type { Finish } from '@/lib/finishes';
 import { api, ApiError, createProject, fetchScanByCode, renameProject, type ProjectRecord } from '@/lib/api';
@@ -48,10 +49,10 @@ interface Stage {
   controls: OrbitControls;
   home?: { views: RoomView[]; dispose: () => void };
   /** Outline around the selected item, and the item the edit menu floats over. */
-  highlight?: THREE.BoxHelper;
+  highlight?: ItemOutline;
   selected?: THREE.Object3D;
   /** Outline around the item a drop would swap with. */
-  swapHighlight?: THREE.BoxHelper;
+  swapHighlight?: ItemOutline;
 }
 
 /** What a finished drag asks for. */
@@ -273,9 +274,8 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       }
       return null;
     };
-    const outlineColor = (h: THREE.BoxHelper | undefined, color: number) => (h?.material as THREE.LineBasicMaterial | undefined)?.color.set(color);
+    const outlineColor = (h: ItemOutline | undefined, color: number) => h?.setColor(color);
     const clearSwapHighlight = () => {
-      stage.swapHighlight?.removeFromParent();
       stage.swapHighlight?.dispose();
       stage.swapHighlight = undefined;
     };
@@ -356,14 +356,11 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       }
       if (d.obj.parent !== view.items) view.items.add(d.obj);
       positionItem(d.obj, { center: shown, rotation: rot, size });
-      stage.highlight?.setFromObject(d.obj);
+      // The outline is a child of the item, so it moves and turns with it; only its colour changes here.
       outlineColor(stage.highlight, d.swapWith !== null ? SWAP : clear ? ACCENT : BLOCKED);
       clearSwapHighlight();
       const target = d.swapWith !== null ? view.items.children.find((c) => c.userData.uid === d.swapWith) : undefined;
-      if (target) {
-        stage.swapHighlight = new THREE.BoxHelper(target, SWAP);
-        scene.add(stage.swapHighlight);
-      }
+      if (target) stage.swapHighlight = new ItemOutline(target, SWAP);
     };
 
     const onUp = (e: PointerEvent) => {
@@ -552,15 +549,13 @@ export default function Viewer({ request }: { request: OpenRequest }) {
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    stage.highlight?.removeFromParent();
     stage.highlight?.dispose();
     stage.highlight = undefined;
     stage.selected = undefined;
     let target: THREE.Object3D | undefined;
     for (const v of stage.home?.views ?? []) target ??= v.items.children.find((c) => c.userData.uid === picked);
     if (target) {
-      stage.highlight = new THREE.BoxHelper(target, ACCENT);
-      stage.scene.add(stage.highlight);
+      stage.highlight = new ItemOutline(target, ACCENT);
       stage.selected = target;
     }
   }, [picked, items]);
