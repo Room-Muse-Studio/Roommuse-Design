@@ -13,6 +13,8 @@ interface Props {
   roomName: string;
   message: string;
   onRotate: (degrees: number) => void;
+  /** Present when the item has doors or drawers: whether they're open, and the switch. */
+  doors?: { open: boolean; onToggle: () => void };
   onFinish: (slot: Slot, finish: Finish, everywhere: boolean) => void;
   onRemove: () => void;
   onClose: () => void;
@@ -25,7 +27,8 @@ const Icon = ({ d }: { d: string }) => (
     <path d={d} />
   </svg>
 );
-// A clockwise arrow, a palette, a bin, a cross.
+// A clockwise arrow, a pair of doors, a palette, a bin, a cross.
+const DOORS = 'M3 3h18v18H3zM12 3v18M10 11v2M14 11v2';
 const ROTATE = 'M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5';
 const PALETTE = 'M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.1-4-7.4-9-7.4ZM7.5 11.5h.01M10 7.5h.01M14.5 7.5h.01M17 11h.01';
 const BIN = 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3';
@@ -36,7 +39,7 @@ const CLOSE = 'M6 6l12 12M18 6 6 18';
  * The viewer positions it every frame through the forwarded ref.
  */
 const ItemToolbar = forwardRef<HTMLDivElement, Props>(function ItemToolbar(
-  { item, roomName, message, onRotate, onFinish, onRemove, onClose }, ref,
+  { item, roomName, message, onRotate, doors, onFinish, onRemove, onClose }, ref,
 ) {
   const [open, setOpen] = useState(false);
   const [slot, setSlot] = useState<Slot>('primary');
@@ -68,6 +71,12 @@ const ItemToolbar = forwardRef<HTMLDivElement, Props>(function ItemToolbar(
             onClick={(e) => onRotate(e.shiftKey ? 15 : 90)}>
             <Icon d={ROTATE} />
           </button>
+          {doors && (
+            <button type="button" className={doors.open ? 'tool on' : 'tool'} title="Open/close the doors (O)" aria-label="Open or close the doors"
+              aria-pressed={doors.open} onClick={doors.onToggle}>
+              <Icon d={DOORS} />
+            </button>
+          )}
           <button type="button" className={open ? 'tool on' : 'tool'} title="Colour & texture" aria-label="Colour and texture" aria-expanded={open}
             onClick={() => setOpen((v) => !v)}>
             <Icon d={PALETTE} />

@@ -13,6 +13,7 @@ const PATHS = {
   reset: 'm2 11 10-8 10 8M5 9v12h6M17 10V9M13 16a4 4 0 0 1 7-2l1 1M21 11v4h-4M21 18a4 4 0 0 1-7 2l-1-1M13 23v-4h4',
   kitchen: 'M3 10h18v11H3zM3 14h18M12 14v7M7 10V6a2 2 0 0 1 4 0M15 3h6v4h-6z',
   wardrobe: 'M4 3h16v18H4zM12 3v18M9 10v3M15 10v3',
+  doors: 'M3 3h18v18H3zM12 3v18M10 11v2M14 11v2',
   rooms: 'M3 4h8v8H3zM11 4h10v16H11zM3 12h8v8H3z',
   ceiling: 'M3 10 12 4l9 6M5 9v11h14V9',
   collapse: 'm15 6-6 6 6 6',

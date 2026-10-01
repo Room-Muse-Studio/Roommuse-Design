@@ -7,8 +7,11 @@
 // A GLB carries its size: every POSITION accessor records min/max, so the
 // bounding box is read from the JSON chunk without touching the vertex data.
 // The files are millimetres, Y up, base at y = 0 and footprint centred; this
-// checks that (and that no node carries a transform that would move the mesh)
-// rather than trusting it.
+// checks that rather than trusting it. A node may carry a translation (a door's
+// or drawer's node sits at its hinge or slide point, see
+// tools/mozu/step-to-glb-parts.mjs), which offsets its box; any other transform
+// is refused, since the box would then be wrong. Doors and drawers (nodes whose
+// extras say `part: 'hinge' | 'slide'`) are counted into the row's `parts`.
 //
 // Which side is the front isn't recorded in the files, and in some of them the
 // width runs along z instead of x. Both are the `front` field: the axis the
@@ -37,14 +40,13 @@ export const GROUPS = [
 const WALL_ELEVATION = 1450;
 
 /**
- * Per-model defaults that the files can't tell us. The tall units KT01–05 and
- * the main wardrobes W04–W10 are modelled with their width along z (a 605 mm
- * wide, 936 mm deep tall unit is not a kitchen cabinet), so their front is ±x.
- * Everything else is assumed to face +z until someone looks.
+ * Per-model defaults that the files can't tell us. The main wardrobes W04–W10
+ * are modelled with their width along z and their open side toward -x (their
+ * back panel is the +x face). Everything else faces +z: the kitchen units' doors
+ * and drawers, and the side cabinets' open fronts (their backs are at -z).
  */
 const FRONT_OVERRIDES = {
-  KT01: '+x', KT02: '+x', KT03: '+x', KT04: '+x', KT05: '+x',
-  W04: '+x', W05: '+x', W06: '+x', W07: '+x', W08: '+x', W09: '+x', W10: '+x',
+  W04: '-x', W05: '-x', W06: '-x', W07: '-x', W08: '-x', W09: '-x', W10: '-x',
 };
 
 export function groupOf(id) {
@@ -61,19 +63,20 @@ export function defaultName(id) {
   return `${group.label} ${id.replace(/^W_/, '')}`;
 }
 
-const isIdentity = (node) => {
+/** A node may be translated (a door at its hinge), but not turned, scaled or given a matrix. */
+const onlyTranslated = (node) => {
   if (node.matrix && node.matrix.some((v, i) => Math.abs(v - (i % 5 === 0 ? 1 : 0)) > 1e-6)) return false;
-  if (node.translation && node.translation.some((v) => Math.abs(v) > 1e-6)) return false;
   if (node.scale && node.scale.some((v) => Math.abs(v - 1) > 1e-6)) return false;
   if (node.rotation && node.rotation.some((v, i) => Math.abs(v - (i === 3 ? 1 : 0)) > 1e-6)) return false;
   return true;
 };
 
 /**
- * The JSON chunk of a GLB and the union of its meshes' bounding boxes, in the
- * file's units. Throws when the file isn't a glTF 2 binary, when a node that
- * carries a mesh has a transform (the box would then be wrong), or when a
- * POSITION accessor has no min/max.
+ * The JSON chunk of a GLB, the union of its meshes' bounding boxes (each offset
+ * by its nodes' translations) in the file's units, and how many doors and
+ * drawers it has (`parts`). Throws when the file isn't a glTF 2 binary, when a
+ * node is turned or scaled (the box would then be wrong), when a POSITION
+ * accessor has no min/max, or when a part's extras are malformed.
  */
 export function measureGlb(buffer) {
   const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
@@ -84,29 +87,36 @@ export function measureGlb(buffer) {
   const json = JSON.parse(buffer.toString('utf8', 20, 20 + chunkLength));
 
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  let normals = true, primitives = 0;
-  const visit = (index, inherited) => {
+  let normals = true, primitives = 0, parts = 0;
+  const visit = (index, offset) => {
     const node = json.nodes[index];
-    const transformed = inherited || !isIdentity(node);
+    if (!onlyTranslated(node)) throw new Error(`node ${index} is turned or scaled; bake that into the mesh first (only a translation is allowed)`);
+    const at = offset.map((v, k) => v + (node.translation?.[k] ?? 0));
+    const part = node.extras?.part;
+    if (part !== undefined) {
+      const okHinge = part === 'hinge' && Array.isArray(node.extras.axis) && node.extras.axis.length === 3 && Number.isFinite(node.extras.open);
+      const okSlide = part === 'slide' && Array.isArray(node.extras.dir) && node.extras.dir.length === 3 && Number.isFinite(node.extras.open);
+      if (!okHinge && !okSlide) throw new Error(`node ${index} has malformed part extras ${JSON.stringify(node.extras)}`);
+      parts++;
+    }
     if (node.mesh !== undefined) {
-      if (transformed) throw new Error(`node ${index} carries a transform; bake it into the mesh first`);
       for (const p of json.meshes[node.mesh].primitives) {
         const a = json.accessors[p.attributes.POSITION];
         if (!a?.min || !a?.max) throw new Error('a POSITION accessor has no min/max');
         for (let k = 0; k < 3; k++) {
-          min[k] = Math.min(min[k], a.min[k]);
-          max[k] = Math.max(max[k], a.max[k]);
+          min[k] = Math.min(min[k], a.min[k] + at[k]);
+          max[k] = Math.max(max[k], a.max[k] + at[k]);
         }
         if (p.attributes.NORMAL === undefined) normals = false;
         primitives++;
       }
     }
-    for (const child of node.children ?? []) visit(child, transformed);
+    for (const child of node.children ?? []) visit(child, at);
   };
   const scene = json.scenes?.[json.scene ?? 0];
-  for (const n of scene?.nodes ?? []) visit(n, false);
+  for (const n of scene?.nodes ?? []) visit(n, [0, 0, 0]);
   if (!primitives) throw new Error('no meshes in the default scene');
-  return { json, min, max, normals, primitives, materials: json.materials?.length ?? 0 };
+  return { json, min, max, normals, primitives, parts, materials: json.materials?.length ?? 0 };
 }
 
 /**
@@ -130,6 +140,7 @@ export function describe(id, measured, bytes, kept = {}) {
     elevation: kept.elevation ?? (group === 'kitchen-wall' ? WALL_ELEVATION : 0),
     front,
     ...(swapped ? { swapped: true } : {}),
+    parts: measured.parts ?? 0,
     bytes,
   };
   const warnings = [];
@@ -168,7 +179,7 @@ function main() {
   const { manifest, warnings } = buildManifest(MODELS_DIR, previous);
   writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + '\n');
   for (const m of manifest.models) {
-    console.log(`${m.id.padEnd(7)} ${m.group.padEnd(14)} ${String(m.width).padStart(5)} × ${String(m.depth).padStart(4)} × ${String(m.height).padStart(4)} mm  front ${m.front}${m.elevation ? `  hung at ${m.elevation}` : ''}`);
+    console.log(`${m.id.padEnd(7)} ${m.group.padEnd(14)} ${String(m.width).padStart(5)} × ${String(m.depth).padStart(4)} × ${String(m.height).padStart(4)} mm  front ${m.front}${m.parts ? `  ${m.parts} door/drawer${m.parts > 1 ? 's' : ''}` : ''}${m.elevation ? `  hung at ${m.elevation}` : ''}`);
   }
   for (const w of warnings) console.warn(`[models] warning: ${w}`);
   console.log(`[models] ${manifest.models.length} model(s) → lib/models.manifest.json`);

@@ -11,7 +11,8 @@
       "height": 800,
       "elevation": 0,
       "front": "+z",
-      "bytes": 472012
+      "parts": 1,
+      "bytes": 91228
     },
     {
       "id": "KF02",
@@ -23,7 +24,8 @@
       "height": 800,
       "elevation": 0,
       "front": "+z",
-      "bytes": 207852
+      "parts": 1,
+      "bytes": 49756
     },
     {
       "id": "KF03",
@@ -35,7 +37,8 @@
       "height": 800,
       "elevation": 0,
       "front": "+z",
-      "bytes": 216352
+      "parts": 2,
+      "bytes": 51952
     },
     {
       "id": "KF04",
@@ -47,7 +50,8 @@
       "height": 660,
       "elevation": 0,
       "front": "+z",
-      "bytes": 9100
+      "parts": 0,
+      "bytes": 11292
     },
     {
       "id": "KF05",
@@ -59,7 +63,8 @@
       "height": 832,
       "elevation": 0,
       "front": "+z",
-      "bytes": 337876
+      "parts": 2,
+      "bytes": 78744
     },
     {
       "id": "KF06",
@@ -71,7 +76,8 @@
       "height": 800,
       "elevation": 0,
       "front": "+z",
-      "bytes": 219064
+      "parts": 3,
+      "bytes": 56224
     },
     {
       "id": "KF07",
@@ -83,7 +89,8 @@
       "height": 800,
       "elevation": 0,
       "front": "+z",
-      "bytes": 760620
+      "parts": 2,
+      "bytes": 146160
     },
     {
       "id": "KF08",
@@ -95,43 +102,47 @@
       "height": 800,
       "elevation": 0,
       "front": "+z",
-      "bytes": 464076
+      "parts": 1,
+      "bytes": 90176
     },
     {
       "id": "KH01",
       "name": "Wall cabinet KH01",
       "group": "kitchen-wall",
       "file": "models/mozu/KH01.glb",
-      "width": 455,
-      "depth": 597,
+      "width": 450,
+      "depth": 330,
       "height": 800,
       "elevation": 1450,
       "front": "+z",
-      "bytes": 273760
+      "parts": 1,
+      "bytes": 53840
     },
     {
       "id": "KH02",
       "name": "Wall cabinet KH02",
       "group": "kitchen-wall",
       "file": "models/mozu/KH02.glb",
-      "width": 909,
-      "depth": 537,
-      "height": 801,
+      "width": 900,
+      "depth": 330,
+      "height": 800,
       "elevation": 1450,
       "front": "+z",
-      "bytes": 1269680
+      "parts": 2,
+      "bytes": 129300
     },
     {
       "id": "KH03",
       "name": "Wall cabinet KH03",
       "group": "kitchen-wall",
       "file": "models/mozu/KH03.glb",
-      "width": 455,
-      "depth": 597,
+      "width": 450,
+      "depth": 330,
       "height": 800,
       "elevation": 1450,
       "front": "+z",
-      "bytes": 274288
+      "parts": 1,
+      "bytes": 54512
     },
     {
       "id": "KH04",
@@ -139,88 +150,90 @@
       "group": "kitchen-wall",
       "file": "models/mozu/KH04.glb",
       "width": 900,
-      "depth": 333,
+      "depth": 330,
       "height": 710,
       "elevation": 1450,
       "front": "+z",
-      "bytes": 543700
+      "parts": 2,
+      "bytes": 103728
     },
     {
       "id": "KT01",
       "name": "Tall cabinet KT01",
       "group": "kitchen-tall",
       "file": "models/mozu/KT01.glb",
-      "width": 936,
-      "depth": 605,
+      "width": 600,
+      "depth": 610,
       "height": 2350,
       "elevation": 0,
-      "front": "+x",
-      "swapped": true,
-      "bytes": 671596
+      "front": "+z",
+      "parts": 1,
+      "bytes": 131876
     },
     {
       "id": "KT02",
       "name": "Tall cabinet KT02",
       "group": "kitchen-tall",
       "file": "models/mozu/KT02.glb",
-      "width": 1128,
-      "depth": 605,
+      "width": 600,
+      "depth": 612,
       "height": 2350,
       "elevation": 0,
-      "front": "+x",
-      "swapped": true,
-      "bytes": 671404
+      "front": "+z",
+      "parts": 1,
+      "bytes": 134568
     },
     {
       "id": "KT03",
       "name": "Tall cabinet KT03",
       "group": "kitchen-tall",
       "file": "models/mozu/KT03.glb",
-      "width": 759,
-      "depth": 604,
+      "width": 600,
+      "depth": 612,
       "height": 2350,
       "elevation": 0,
-      "front": "+x",
-      "swapped": true,
-      "bytes": 744752
+      "front": "+z",
+      "parts": 2,
+      "bytes": 146700
     },
     {
       "id": "KT04",
       "name": "Tall cabinet KT04",
       "group": "kitchen-tall",
       "file": "models/mozu/KT04.glb",
-      "width": 842,
-      "depth": 600,
+      "width": 600,
+      "depth": 610,
       "height": 2350,
       "elevation": 0,
-      "front": "+x",
-      "swapped": true,
-      "bytes": 478028
+      "front": "+z",
+      "parts": 2,
+      "bytes": 103708
     },
     {
       "id": "KT05",
       "name": "Tall cabinet KT05",
       "group": "kitchen-tall",
       "file": "models/mozu/KT05.glb",
-      "width": 1167,
-      "depth": 603,
+      "width": 600,
+      "depth": 612,
       "height": 2350,
       "elevation": 0,
-      "front": "+x",
-      "swapped": true,
-      "bytes": 673240
+      "front": "+z",
+      "parts": 1,
+      "bytes": 132548
     },
     {
       "id": "KT06",
       "name": "Tall cabinet KT06",
       "group": "kitchen-tall",
       "file": "models/mozu/KT06.glb",
-      "width": 906,
-      "depth": 835,
+      "width": 900,
+      "depth": 634,
       "height": 2350,
       "elevation": 0,
       "front": "+z",
-      "bytes": 546804
+      "parts": 2,
+      "bytes": 105024
     },
     {
       "id": "W04",
@@ -231,9 +244,10 @@
       "depth": 560,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 7952
+      "parts": 0,
+      "bytes": 18228
     },
     {
       "id": "W05",
@@ -244,9 +258,10 @@
       "depth": 580,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 60012
+      "parts": 0,
+      "bytes": 19572
     },
     {
       "id": "W06",
@@ -257,9 +272,10 @@
       "depth": 580,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 62100
+      "parts": 0,
+      "bytes": 23436
     },
     {
       "id": "W07",
@@ -270,9 +286,10 @@
       "depth": 580,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 297632
+      "parts": 0,
+      "bytes": 67168
     },
     {
       "id": "W08",
@@ -283,9 +300,10 @@
       "depth": 580,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 270092
+      "parts": 0,
+      "bytes": 61192
     },
     {
       "id": "W09",
@@ -296,9 +314,10 @@
       "depth": 580,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 62040
+      "parts": 0,
+      "bytes": 23772
     },
     {
       "id": "W10",
@@ -309,9 +328,10 @@
       "depth": 560,
       "height": 2400,
       "elevation": 0,
-      "front": "+x",
+      "front": "-x",
       "swapped": true,
-      "bytes": 31424
+      "parts": 0,
+      "bytes": 10904
     },
     {
       "id": "W_ADJ1",
@@ -323,7 +343,8 @@
       "height": 500,
       "elevation": 0,
       "front": "+z",
-      "bytes": 2504
+      "parts": 0,
+      "bytes": 2904
     },
     {
       "id": "W_ADJ2",
@@ -335,7 +356,8 @@
       "height": 500,
       "elevation": 0,
       "front": "+z",
-      "bytes": 2504
+      "parts": 0,
+      "bytes": 2904
     },
     {
       "id": "W01",
@@ -347,7 +369,8 @@
       "height": 2350,
       "elevation": 0,
       "front": "+z",
-      "bytes": 1517408
+      "parts": 0,
+      "bytes": 36340
     },
     {
       "id": "W02",
@@ -359,7 +382,8 @@
       "height": 2350,
       "elevation": 0,
       "front": "+z",
-      "bytes": 75996
+      "parts": 0,
+      "bytes": 23220
     },
     {
       "id": "W03",
@@ -371,7 +395,8 @@
       "height": 2350,
       "elevation": 0,
       "front": "+z",
-      "bytes": 5688
+      "parts": 0,
+      "bytes": 6944
     }
   ]
 }

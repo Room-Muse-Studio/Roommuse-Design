@@ -13,7 +13,8 @@ import {
 } from '@/lib/items';
 import { buildItem, positionItem } from '@/lib/itemMesh';
 import { preloadModels } from '@/lib/modelLoader';
-import { MODEL_SPECS } from '@/lib/models';
+import { hasDoors, MODEL_SPECS } from '@/lib/models';
+import { setDoorsOpen, type DoorRig } from '@/lib/modelMesh';
 import { ItemOutline } from '@/lib/outline';
 import { containsPoint } from '@/lib/walls';
 import type { Finish } from '@/lib/finishes';
@@ -57,7 +58,12 @@ interface Stage {
   selected?: THREE.Object3D;
   /** Outline around the item a drop would swap with. */
   swapHighlight?: ItemOutline;
+  /** Items whose doors are on their way open or shut (see the render loop). */
+  swinging: Set<THREE.Object3D>;
 }
+
+/** How long doors take to swing open or shut, in ms. */
+const SWING_MS = 250;
 
 /** What a finished drag asks for. */
 type DragResult =
@@ -249,7 +255,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     const controls = new OrbitControls(persp, labels.domElement);
     controls.enableDamping = true;
     controls.maxPolarAngle = Math.PI / 2 - 0.02; // stay above the floor
-    const stage: Stage = { renderer, labels, scene, persp, ortho, camera: persp, orthoHalf: 10, controls };
+    const stage: Stage = { renderer, labels, scene, persp, ortho, camera: persp, orthoHalf: 10, controls, swinging: new Set() };
     stageRef.current = stage;
 
     const resize = () => {
@@ -406,8 +412,21 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     const top = new THREE.Vector3();
     const bounds = new THREE.Box3();
     let raf = 0;
+    let last = performance.now();
     const tick = () => {
       raf = requestAnimationFrame(tick);
+      const now = performance.now(), step = (now - last) / SWING_MS;
+      last = now;
+      // Doors swinging toward the item's `open`; the outline is refitted once they get there.
+      for (const obj of stage.swinging) {
+        const rig = obj.userData.doors as DoorRig, target = obj.userData.doorsTarget as number;
+        const amount = rig.amount < target ? Math.min(target, rig.amount + step) : Math.max(target, rig.amount - step);
+        setDoorsOpen(rig, amount);
+        if (amount === target || !obj.parent) {
+          stage.swinging.delete(obj);
+          if (stage.selected === obj) stage.highlight?.fit(obj);
+        }
+      }
       controls.update();
       renderer.render(scene, stage.camera);
       labels.render(scene, stage.camera);
@@ -559,15 +578,27 @@ export default function Viewer({ request }: { request: OpenRequest }) {
   }, [view]);
 
   // Redraw the items whenever they, the rooms they stand in, or the model files they're drawn from change.
+  // An item whose doors were drawn otherwise than its `open` says starts from where they were and swings.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage?.home) return;
-    for (const v of stage.home.views) clearItems(v.items);
+    const doorsWere = new Map<number, number>();
+    for (const v of stage.home.views) {
+      for (const c of v.items.children) if (c.userData.doors) doorsWere.set(c.userData.uid, (c.userData.doors as DoorRig).amount);
+      clearItems(v.items);
+    }
+    stage.swinging.clear();
     for (const item of items) {
       const view = stage.home.views.find((v) => v.key === item.roomKey);
       if (!view) continue;
       const obj = buildItem(item);
       obj.userData.uid = item.uid;
+      const rig = obj.userData.doors as DoorRig | undefined, was = doorsWere.get(item.uid);
+      if (rig && was !== undefined && was !== rig.amount) {
+        obj.userData.doorsTarget = rig.amount;
+        setDoorsOpen(rig, was);
+        stage.swinging.add(obj);
+      }
       positionItem(obj, item);
       view.items.add(obj);
     }
@@ -655,6 +686,19 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     setItems((list) => list.map((i) => (i.uid === item.uid ? { ...i, rotation, center } : i)));
   };
 
+  /** Open or shut the selected item's doors and drawers (an edit like any other: saved, and undoable). */
+  const toggleDoors = () => {
+    const item = pickedItem;
+    if (!item || !hasDoors(item.builder.modelId)) return;
+    setItems((list) => list.map((i) => {
+      if (i.uid !== item.uid) return i;
+      const next = { ...i };
+      if (i.open) delete next.open;
+      else next.open = true;
+      return next;
+    }));
+  };
+
   /** A finish for the selected item, or for every item of the same kind (every wardrobe, every base cabinet…). */
   const setFinish = (slot: Slot, finish: Finish, everywhere: boolean) => {
     const me = pickedItem;
@@ -662,7 +706,8 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     setItems((list) => list.map((i) => (i.uid === me.uid || (everywhere && sameFamily(i, me)) ? { ...i, finishes: { ...i.finishes, [slot]: finish } } : i)));
   };
 
-  // Keys: ⌘Z / ⇧⌘Z undo and redo; Delete removes the selected item, R turns it (Shift: 15°), Escape deselects. Not while typing.
+  // Keys: ⌘Z / ⇧⌘Z undo and redo; Delete removes the selected item, R turns it (Shift: 15°), O opens or shuts
+  // its doors, Escape deselects. Not while typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -676,7 +721,9 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       if (picked === null) return;
       if (e.key === 'Escape') setPicked(null);
       else if (e.key === 'r' || e.key === 'R') rotateItem(e.shiftKey ? 15 : 90);
-      else if (e.key === 'Delete' || e.key === 'Backspace') {
+      else if ((e.key === 'o' || e.key === 'O') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (editable) toggleDoors();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         removeItem(picked);
       }
@@ -882,6 +929,9 @@ export default function Viewer({ request }: { request: OpenRequest }) {
             canEdit={editable && pickedItem !== null}
             onDuplicate={duplicateItem}
             onDelete={() => { if (picked !== null) removeItem(picked); }}
+            canDoors={editable && pickedItem !== null && hasDoors(pickedItem.builder.modelId)}
+            doorsOpen={!!pickedItem?.open}
+            onDoors={toggleDoors}
             roomsOpen={spacesOpen}
             onRooms={() => setSpacesOpen((v) => !v)}
             ceilings={ceilings}
@@ -896,6 +946,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
               roomName={roomName(pickedItem.roomKey)}
               message={toolbarMessage}
               onRotate={rotateItem}
+              doors={editable && hasDoors(pickedItem.builder.modelId) ? { open: !!pickedItem.open, onToggle: toggleDoors } : undefined}
               onFinish={setFinish}
               onRemove={() => removeItem(pickedItem.uid)}
               onClose={() => setPicked(null)}

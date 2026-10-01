@@ -29,6 +29,8 @@ export interface ModelSpec {
   front: Front;
   /** The file's width runs along z (front is ±x), so its x extent is the depth. */
   swapped?: boolean;
+  /** How many doors and drawers the file has as separate, openable parts. */
+  parts: number;
   bytes: number;
 }
 
@@ -43,6 +45,9 @@ export const MODEL_GROUPS: { id: ModelGroupId; name: string; short: string }[] =
 ];
 
 export const modelById = (id: string) => MODEL_SPECS.find((m) => m.id === id);
+
+/** The model has doors or drawers that open. */
+export const hasDoors = (id: string) => (modelById(id)?.parts ?? 0) > 0;
 
 /** The models of one or more groups, in catalogue order. */
 export const modelsIn = (...groups: ModelGroupId[]) => MODEL_SPECS.filter((m) => groups.includes(m.group));

@@ -47,6 +47,8 @@ export interface Item {
   finishes: Record<Slot, Finish>;
   /** It came with the scan (it can still be moved, recoloured or removed). */
   fromScan?: boolean;
+  /** Its doors and drawers are drawn open (only models that have some; closed when absent). */
+  open?: boolean;
 }
 
 /** Something the library can add. */

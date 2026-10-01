@@ -14,6 +14,10 @@ interface Props {
   canEdit: boolean;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** The selected item has doors or drawers (and may be edited). */
+  canDoors: boolean;
+  doorsOpen: boolean;
+  onDoors: () => void;
   roomsOpen: boolean;
   onRooms: () => void;
   ceilings: boolean;
@@ -49,6 +53,8 @@ export default function BottomToolbar(p: Props) {
       <Tool icon="redo" label="Redo" title={`Redo (⇧${mod}Z)`} disabled={!p.canRedo} onClick={p.onRedo} />
       <Tool icon="duplicate" label="Duplicate" title="Duplicate the selected item" disabled={!p.canEdit} onClick={p.onDuplicate} />
       <Tool icon="delete" label="Delete" title="Delete the selected item (Delete)" disabled={!p.canEdit} onClick={p.onDelete} />
+      <Tool icon="doors" label="Doors" on={p.canDoors && p.doorsOpen} disabled={!p.canDoors} onClick={p.onDoors}
+        title={p.canDoors ? 'Open/close the selected cabinet’s doors (O)' : 'Select a cabinet with doors or drawers'} />
       <i className="tb-div" />
       <Tool icon="rooms" label="Rooms" title="Show one room or all of them" on={p.roomsOpen} onClick={p.onRooms} />
       <Tool icon="ceiling" label="Ceilings" title="Show ceilings" on={p.ceilings} onClick={p.onCeilings} />

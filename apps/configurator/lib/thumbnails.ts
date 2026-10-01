@@ -29,7 +29,7 @@ function getStage() {
   return stage;
 }
 
-/** A PNG data URL of the item, seen from the front and a little to the left. */
+/** A PNG data URL of the item, seen from the front and a little to the left, doors closed (whatever its `open`). */
 export function itemThumbnail(item: Pick<Item, 'builder' | 'size' | 'finishes'>): string {
   const f = item.finishes, s = item.size;
   // A model's picture changes when its file arrives: until then it shows the placeholder box.
@@ -40,7 +40,7 @@ export function itemThumbnail(item: Pick<Item, 'builder' | 'size' | 'finishes'>)
   if (hit) return hit;
 
   const { renderer, scene, camera } = getStage();
-  const obj = buildItem(item);
+  const obj = buildItem(item, false);
   scene.add(obj);
   const box = new THREE.Box3().setFromObject(obj);
   const center = box.getCenter(new THREE.Vector3());

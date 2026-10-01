@@ -1,0 +1,12 @@
+{
+  "name": "mozu-model-tools",
+  "private": true,
+  "description": "Offline conversion of MOZU's STEP files into the configurator's GLBs. Not a workspace and not part of the build.",
+  "type": "module",
+  "scripts": {
+    "convert": "node step-to-glb-parts.mjs"
+  },
+  "dependencies": {
+    "occt-import-js": "^0.0.22"
+  }
+}

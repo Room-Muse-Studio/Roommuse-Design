@@ -78,6 +78,7 @@ export function migrateItems(items: unknown): Item[] {
       finishes: readFinishes(raw.finishes),
     };
     if (raw.fromScan === true) item.fromScan = true;
+    if (raw.open === true && raw.builder.kind === 'model') item.open = true;
     out.push(item);
   }
   return out;

@@ -30,7 +30,9 @@ test('the nearest model counts height double; ties go to the first in the catalo
 test('scanned storage becomes the MOZU model you would expect', () => {
   assert.equal(matchStorage({ width: 1200, depth: 600, height: 2000, elevation: 0 }, false)!.id, 'W05', 'a bedroom wardrobe');
   assert.equal(matchStorage({ width: 900, depth: 250, height: 300, elevation: 1500 }, false)!.id, 'KH04', 'a wall shelf');
-  assert.equal(matchStorage({ width: 1000, depth: 600, height: 2300, elevation: 0 }, true)!.id, 'KT01', 'a tall unit in a kitchen');
+  // The tall units are 600 wide (KT01–05) or 900 (KT06, the fridge unit), measured with their doors shut.
+  assert.equal(matchStorage({ width: 1000, depth: 600, height: 2300, elevation: 0 }, true)!.id, 'KT06', 'a wide tall unit in a kitchen');
+  assert.equal(matchStorage({ width: 600, depth: 600, height: 2300, elevation: 0 }, true)!.id, 'KT01', 'a tall unit in a kitchen');
   assert.equal(matchStorage({ width: 1000, depth: 600, height: 2300, elevation: 0 }, false)!.group, 'wardrobe-main', 'the same thing in a bedroom is a wardrobe');
   assert.equal(matchStorage({ width: 450, depth: 450, height: 500, elevation: 0 }, false)!.id, 'W_ADJ1', 'a low cupboard');
 });

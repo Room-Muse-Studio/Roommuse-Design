@@ -70,3 +70,17 @@ test('migration is idempotent and shrugs at odd data', () => {
     assert.deepEqual(migrateItems(odd), [], JSON.stringify(odd));
   }
 });
+
+test('a model item keeps its doors open through a reload; new and old items start closed', () => {
+  const [open, shut, legacy] = migrateItems([
+    old(1, { kind: 'model', modelId: 'KT01' }, { width: 600, depth: 610, height: 2350 }, { open: true }),
+    old(2, { kind: 'model', modelId: 'KT01' }, { width: 600, depth: 610, height: 2350 }, { open: 'yes' }),
+    old(3, { kind: 'module', moduleId: 'tall-600-pantry' }, { width: 600, depth: 580, height: 2200 }, { open: true }),
+  ]);
+  assert.equal(open.open, true);
+  assert.equal('open' in shut, false, 'only a real true counts');
+  assert.equal('open' in legacy, false);
+  assert.deepEqual(migrateItems([open]), [open], 'idempotent');
+  const fresh = itemFromSpec(specById('KT01')!, 9, 'kitchen', { center: { x: 0, z: 0 }, rotation: 0 });
+  assert.equal(fresh.open, undefined);
+});

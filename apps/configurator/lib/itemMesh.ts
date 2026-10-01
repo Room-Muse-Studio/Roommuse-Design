@@ -8,9 +8,16 @@ import { buildModel } from './modelMesh';
 
 const M = 1 / 1000;
 
-export function buildItem(item: Pick<Item, 'builder' | 'size' | 'finishes'>): THREE.Group {
+/**
+ * `open` draws the doors and drawers open (the item's `open`, unless the caller
+ * says otherwise: pictures are always closed). The model's door rig, if it has
+ * one, is passed up to the item's `userData.doors` for the viewer to animate.
+ */
+export function buildItem(item: Pick<Item, 'builder' | 'size' | 'finishes' | 'open'>, open = !!item.open): THREE.Group {
   const root = new THREE.Group();
-  root.add(buildModel(item.builder.modelId, item.size, item.finishes.primary));
+  const model = buildModel(item.builder.modelId, item.size, item.finishes.primary, open);
+  if (model.userData.doors) root.userData.doors = model.userData.doors;
+  root.add(model);
   return root;
 }
 

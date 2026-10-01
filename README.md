@@ -36,7 +36,7 @@ Node 20 or newer. Run `npm install` once (and after pulling changes).
 The website. It opens a scan by **Code from the phone**, from a `/scan/B7K4M2` link, from a sample, or from a
 `mozu.roomscan/1` / `mozu.homescan/1` file, with every room at its real position. The **Rooms** menu isolates one;
 **Show ceilings** adds ceilings. The library on the left adds MOZU's products; click an item for its menu
-(rotate, finish, remove), drag it to move it, drop it on another to swap them.
+(rotate, open the doors, finish, remove), drag it to move it, drop it on another to swap them.
 
 **The catalogue is MOZU's range**, 30 models: kitchen base cabinets KF01–08, wall cabinets KH01–04 (hung at
 1450 mm), tall cabinets KT01–06, wardrobes W04–W10 and side cabinets W01–03 / ADJ1–2. Each is a GLB in
@@ -49,6 +49,15 @@ item of the same kind. The build copies the files into `public/models/mozu/`.
   or replacing a model file, run `npm run models:measure -w apps/configurator` to rewrite it; `front`, `name`
   and `elevation` edited by hand survive a re-run, so a model whose doors face the wall is fixed by changing
   its `front` line and re-running. The build refuses to start if the files and the manifest disagree.
+- **Doors and drawers open.** The model files are made from MOZU's STEP assemblies by
+  `tools/mozu/step-to-glb-parts.mjs` (offline; `cd tools/mozu && npm install && node step-to-glb-parts.mjs`),
+  which closes the doors the designers left standing open (turning each about its hinge pins) and writes each
+  door or drawer as its own GLB node: `door:<n>` / `drawer:<n>`, translated to its pivot, mesh in the closed
+  pose relative to it, with `extras` `{ part: 'hinge', axis, open: radians }` or
+  `{ part: 'slide', dir, open: mm }`. The manifest counts them (`parts`). Select a cabinet that has some and
+  press **Doors** in the bottom bar, the doors button in its menu, or **O**: they swing 95° out (drawers slide
+  out 60 % of their depth). It is saved with the design (`open` on the item) and undoable; pictures always
+  show the cabinet closed. Wardrobes and KF04 have no separate doors, so the button is greyed out for them.
 - **What a scan shows:** only storage becomes an item (a wardrobe, cupboard or shelf RoomPlan found), and it
   becomes the closest MOZU model in size: wall-hung things become wall cabinets, low things base or side
   cabinets, tall things wardrobes (kitchen tall units only in a kitchen). Beds, sofas, tables, chairs,

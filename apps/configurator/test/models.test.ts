@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { fitScale, MODEL_GROUPS, MODEL_SPECS, modelById, modelsIn, yawOf } from '../lib/models';
+import { fitScale, hasDoors, MODEL_GROUPS, MODEL_SPECS, modelById, modelsIn, yawOf } from '../lib/models';
 
 const MODELS = path.resolve(import.meta.dirname, '..', 'models');
 
@@ -24,14 +24,31 @@ test('kitchen wall cabinets hang at 1450; everything else stands on the floor', 
   for (const m of MODEL_SPECS) assert.equal(m.elevation, m.group === 'kitchen-wall' ? 1450 : 0, m.id);
 });
 
-test('the swapped files are turned a quarter, so their width is their longer side', () => {
-  for (const id of ['KT01', 'KT02', 'KT03', 'KT04', 'KT05', 'W04', 'W05', 'W06', 'W07', 'W08', 'W09', 'W10']) {
-    const m = modelById(id)!;
-    assert.ok(m.swapped && (m.front === '+x' || m.front === '-x'), `${id}: front ${m.front}`);
-    assert.ok(m.width > m.depth, `${id}: ${m.width} wide × ${m.depth} deep`);
+test('only the main wardrobes are turned a quarter (open side toward -x), so their width is their longer side', () => {
+  for (const m of MODEL_SPECS) {
+    const turned = /^W(0[4-9]|10)$/.test(m.id);
+    assert.equal(!!m.swapped, turned, `${m.id}: swapped`);
+    assert.equal(m.front, turned ? '-x' : '+z', `${m.id}: front`);
+    if (turned) assert.ok(m.width > m.depth, `${m.id}: ${m.width} wide × ${m.depth} deep`);
   }
   assert.equal(modelById('W05')!.width, 900);
-  assert.equal(modelById('KT01')!.depth, 605);
+  // The tall units measured with their doors closed: 600 wide, about 610 deep.
+  for (const id of ['KT01', 'KT02', 'KT03', 'KT04', 'KT05']) {
+    const m = modelById(id)!;
+    assert.equal(m.width, 600, `${id} width`);
+    assert.ok(m.depth >= 600 && m.depth <= 640, `${id}: ${m.depth} deep`);
+  }
+});
+
+test('the kitchen units have doors or drawers that open; the wardrobes and KF04 have none', () => {
+  for (const m of MODEL_SPECS) {
+    const expected = m.id.startsWith('K') && m.id !== 'KF04';
+    assert.equal(m.parts > 0, expected, `${m.id}: ${m.parts} parts`);
+    assert.equal(hasDoors(m.id), expected, m.id);
+  }
+  assert.equal(modelById('KF06')!.parts, 3);
+  assert.equal(modelById('KH02')!.parts, 2);
+  assert.equal(hasDoors('nope'), false);
 });
 
 test('a front of +x turns -90° to face +z; a model is drawn at its own size', () => {
