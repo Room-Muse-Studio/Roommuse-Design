@@ -28,7 +28,7 @@ fs.rmSync(OUT, { recursive: true, force: true });
 fs.cpSync(path.join(APP, 'out'), OUT, { recursive: true });
 fs.cpSync(path.join(ROOT, 'packages', 'scan-sdk', 'dist'), path.join(OUT, 'packages', 'scan-sdk', 'dist'), { recursive: true });
 
-for (const required of ['index.html', 'samples/index.json', 'packages/scan-sdk/dist/mozu-scan-sdk.global.js']) {
+for (const required of ['index.html', 'samples/index.json', 'models/mozu/KF01.glb', 'packages/scan-sdk/dist/mozu-scan-sdk.global.js']) {
   if (!fs.existsSync(path.join(OUT, required))) {
     console.error(`[build] missing ${required}`);
     process.exit(1);

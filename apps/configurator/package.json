@@ -4,11 +4,12 @@
   "private": true,
   "description": "RoomMuse configurator: open scans (by code from the phone, sample or file) and furnish them. Deployed as a static site (npm run export) next to the handoff API.",
   "scripts": {
-    "dev": "node scripts/copy-samples.mjs && next dev --port 3100",
-    "build": "node scripts/copy-samples.mjs && next build",
-    "export": "node scripts/copy-samples.mjs && MOZU_STATIC_EXPORT=1 next build",
+    "dev": "node scripts/copy-samples.mjs && node scripts/copy-models.mjs && next dev --port 3100",
+    "build": "node scripts/copy-samples.mjs && node scripts/copy-models.mjs && next build",
+    "export": "node scripts/copy-samples.mjs && node scripts/copy-models.mjs && MOZU_STATIC_EXPORT=1 next build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"test/**/*.test.ts\""
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "models:measure": "node scripts/measure-models.mjs"
   },
   "dependencies": {
     "@mozu/scan-sdk": "*",
