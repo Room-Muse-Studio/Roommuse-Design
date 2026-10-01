@@ -1,6 +1,6 @@
-// GET/POST /api/projects (list, create). Vercel's [...path].js next to this file
-// only matches paths with a segment after /api/projects, so the bare path needs
-// its own function. Both delegate to the same router in server/project-api.js.
+// GET/POST /api/projects (list, create). The per-project routes live in
+// [id].js, [id]/duplicate.js and [id]/thumbnail.js — one dynamic segment per
+// file, the way Vercel's router matches. All delegate to server/project-api.js.
 'use strict';
 const { projects } = require('../_app');
 

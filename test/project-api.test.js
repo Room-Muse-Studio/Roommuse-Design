@@ -313,15 +313,31 @@ test('needs a session, refuses cross-site writes, rate limits saves and code loo
   assert.match(guessed.body.error, /code lookups/);
 });
 
-test('Vercel functions api/projects/index.js and [...path].js share one router', async (t) => {
-  const index = require('../api/projects/index.js');
-  const item = require('../api/projects/[...path].js');
-  const server = http.createServer((req, res) => (new URL(req.url, 'http://x').pathname.replace(/\/$/, '') === '/api/projects' ? index : item)(req, res));
+test('Vercel functions api/projects/{index,[id],[id]/duplicate,[id]/thumbnail}.js share one router', async (t) => {
+  const files = {
+    index: require('../api/projects/index.js'),
+    item: require('../api/projects/[id].js'),
+    duplicate: require('../api/projects/[id]/duplicate.js'),
+    thumbnail: require('../api/projects/[id]/thumbnail.js'),
+  };
+  const pick = (pathname) => {
+    const parts = pathname.split('/').filter(Boolean); // api, projects, id?, action?
+    if (parts.length === 2) return files.index;
+    if (parts.length === 3) return files.item;
+    return files[parts[3]] || null;
+  };
+  const server = http.createServer((req, res) => {
+    const fn = pick(new URL(req.url, 'http://x').pathname);
+    if (fn) return fn(req, res);
+    res.writeHead(404); res.end();
+  });
   const { base, close } = await listen(server);
   t.after(close);
+  const json = { headers: { 'content-type': 'application/json' }, body: '{}' };
   assert.equal((await fetch(base + '/api/projects')).status, 401);
   assert.equal((await fetch(base + '/api/projects/abcdefgh12')).status, 401);
-  assert.equal((await fetch(base + '/api/projects/abcdefgh12/thumbnail', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
+  assert.equal((await fetch(base + '/api/projects/abcdefgh12/duplicate', { method: 'POST', ...json })).status, 401);
+  assert.equal((await fetch(base + '/api/projects/abcdefgh12/thumbnail', { method: 'PUT', ...json })).status, 401);
 });
 
 test('project names are unique within an account: typed duplicates are refused, automatic ones get a number', async (t) => {

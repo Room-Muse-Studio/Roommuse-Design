@@ -155,15 +155,20 @@ test('Vercel functions: same contract through api/**/*.js', async (t) => {
     '/api/scan-link': require('../api/scan-link'),
     '/api/auth/[action]': require('../api/auth/[action]'),
     '/api/projects/index': require('../api/projects/index'),
-    '/api/projects/[...path]': require('../api/projects/[...path]'),
+    '/api/projects/[id]': require('../api/projects/[id]'),
+    '/api/projects/[id]/duplicate': require('../api/projects/[id]/duplicate'),
+    '/api/projects/[id]/thumbnail': require('../api/projects/[id]/thumbnail'),
   };
-  // Stand-in for Vercel's file-system router: exact files first, then
-  // [action] for one segment and [...path] for one or more (never zero).
+  // Stand-in for Vercel's file-system router: exact files first, then one
+  // dynamic segment per bracket file. (A [...path] catch-all did not match two
+  // segments on Vercel, which is why duplicate and thumbnail have their own files.)
   const resolve = (pathname) => {
     if (functions[pathname]) return functions[pathname];
     if (/^\/api\/auth\/[^/]+$/.test(pathname)) return functions['/api/auth/[action]'];
     if (pathname === '/api/projects' || pathname === '/api/projects/') return functions['/api/projects/index'];
-    if (/^\/api\/projects\/[^/]+/.test(pathname)) return functions['/api/projects/[...path]'];
+    const m = pathname.match(/^\/api\/projects\/[^/]+(?:\/([^/]+))?$/);
+    if (m && !m[1]) return functions['/api/projects/[id]'];
+    if (m && (m[1] === 'duplicate' || m[1] === 'thumbnail')) return functions[`/api/projects/[id]/${m[1]}`];
     return null;
   };
   // …plus vercel.json's /scan rewrites.
