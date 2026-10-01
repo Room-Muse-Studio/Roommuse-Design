@@ -1,20 +1,23 @@
 /**
- * Draw an Item: cabinets through the module builder, everything else through
- * the furniture builder. Either way the result is centred on the item's
- * footprint, so placing and turning work the same for both.
+ * Draw an Item: MOZU models through the model builder, the old procedural
+ * cabinets and furniture through theirs. Either way the result is centred on
+ * the item's footprint, so placing and turning work the same for all.
  */
 import * as THREE from 'three';
 import type { Item } from './items';
 import { moduleById } from './modules';
 import { buildModule } from './moduleMesh';
 import { buildFurniture } from './furnitureMesh';
+import { buildModel } from './modelMesh';
 
 const M = 1 / 1000;
 
 export function buildItem(item: Pick<Item, 'builder' | 'size' | 'finishes'>): THREE.Group {
   const root = new THREE.Group();
   const { primary, secondary } = item.finishes;
-  if (item.builder.kind === 'module') {
+  if (item.builder.kind === 'model') {
+    root.add(buildModel(item.builder.modelId, item.size, primary));
+  } else if (item.builder.kind === 'module') {
     const spec = moduleById(item.builder.moduleId);
     if (spec) {
       const cabinet = buildModule(spec, { front: primary, carcass: secondary });

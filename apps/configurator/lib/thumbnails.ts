@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import type { Item } from './items';
 import { buildItem } from './itemMesh';
+import { modelState } from './modelLoader';
 
 const SIZE = 192;
 const cache = new Map<string, string>();
@@ -31,7 +32,9 @@ function getStage() {
 /** A PNG data URL of the item, seen from the front and a little to the left. */
 export function itemThumbnail(item: Pick<Item, 'builder' | 'size' | 'finishes'>): string {
   const f = item.finishes, s = item.size;
-  const key = [JSON.stringify(item.builder), s.width, s.depth, s.height,
+  // A model's picture changes when its file arrives: until then it shows the placeholder box.
+  const state = item.builder.kind === 'model' ? modelState(item.builder.modelId) : '';
+  const key = [JSON.stringify(item.builder), state, s.width, s.depth, s.height,
     f.primary.color, f.primary.pattern, f.primary.sheen, f.secondary.color, f.secondary.pattern, f.secondary.sheen].join('|');
   const hit = cache.get(key);
   if (hit) return hit;
@@ -52,7 +55,11 @@ export function itemThumbnail(item: Pick<Item, 'builder' | 'size' | 'finishes'>)
   const url = renderer.domElement.toDataURL('image/png');
 
   scene.remove(obj);
-  obj.traverse((o) => (o as THREE.Mesh).geometry?.dispose()); // materials are shared; keep them
+  // Materials are shared between items and kept; so is a model file's geometry.
+  obj.traverse((o) => {
+    const g = (o as THREE.Mesh).geometry;
+    if (g && !g.userData.shared) g.dispose();
+  });
   cache.set(key, url);
   return url;
 }

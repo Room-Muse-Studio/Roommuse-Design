@@ -17,7 +17,10 @@ import { containsPoint, labelPoint, pointOnWall, wallFrames, type WallFrame } fr
 
 export type Slot = 'primary' | 'secondary';
 
-export type Builder = { kind: 'module'; moduleId: string } | { kind: 'furniture'; type: FurnitureType };
+export type Builder =
+  | { kind: 'model'; modelId: string }
+  | { kind: 'module'; moduleId: string }
+  | { kind: 'furniture'; type: FurnitureType };
 
 export interface Size {
   width: number;
@@ -74,6 +77,7 @@ const FURNITURE_LOOK: Record<FurnitureType, { slots: Record<Slot, string>; finis
 };
 
 export function slotNames(builder: Builder): Record<Slot, string> {
+  if (builder.kind === 'model') return { primary: 'Finish', secondary: 'Finish' };
   return builder.kind === 'module' ? { primary: 'Doors & drawers', secondary: 'Carcass' } : FURNITURE_LOOK[builder.type].slots;
 }
 
@@ -230,7 +234,7 @@ export function swapPlaces(
  */
 export function freeSpot(room: RoomScan, spec: Pick<ItemSpec, 'builder' | 'size'>, others: Item[]): { center: Vec2; rotation: number } | null {
   const walls = wallFrames(room.polygon);
-  if (spec.builder.kind === 'module') {
+  if (spec.builder.kind === 'module' || spec.builder.kind === 'model') {
     const spot = findSpot({ ...room, objects: [] }, spec.size, [], WALL_GAP, others.map(itemObstacle));
     if (spot) {
       const wall = walls[spot.wall];

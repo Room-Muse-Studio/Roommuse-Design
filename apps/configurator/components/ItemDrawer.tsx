@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ITEM_GROUPS, ITEM_SPECS, type Item } from '@/lib/items';
 import { itemThumbnail } from '@/lib/thumbnails';
+import { useModelsVersion } from './useModels';
 import { Icon, type IconName } from './Icons';
 
 /** What the rail offers: each section groups one or more item groups. */
@@ -58,8 +59,9 @@ export const sizeText = (i: Pick<Item, 'size'>) =>
 /** Pictures of items with their current finishes, once the browser can draw them. */
 export function useItemPictures(items: Item[]) {
   const [pictures, setPictures] = useState<Record<number, string>>({});
+  const modelsVersion = useModelsVersion();
   // Keyed on what the pictures show, not on the array: callers may build a new array every render.
-  const key = items.map((i) => [i.uid, JSON.stringify(i.builder), i.size.width, i.size.depth, i.size.height,
+  const key = modelsVersion + '#' + items.map((i) => [i.uid, JSON.stringify(i.builder), i.size.width, i.size.depth, i.size.height,
     i.finishes.primary.color, i.finishes.primary.pattern, i.finishes.primary.sheen,
     i.finishes.secondary.color, i.finishes.secondary.pattern, i.finishes.secondary.sheen].join(':')).join('|');
   useEffect(() => {
@@ -72,9 +74,11 @@ export function useItemPictures(items: Item[]) {
 export default function ItemDrawer(p: Props) {
   const [tab, setTab] = useState(p.section.tabs[0].id);
   useEffect(() => setTab(p.section.tabs[0].id), [p.section.id]);
-  // Library pictures are rendered with WebGL, so only in the browser, after the first paint.
+  // Library pictures are rendered with WebGL, so only in the browser, after the first paint,
+  // and again as model files arrive (a model's picture is a plain box until then).
   const [library, setLibrary] = useState<Record<string, string>>({});
-  useEffect(() => setLibrary(Object.fromEntries(ITEM_SPECS.map((s) => [s.id, itemThumbnail(s)]))), []);
+  const modelsVersion = useModelsVersion();
+  useEffect(() => setLibrary(Object.fromEntries(ITEM_SPECS.map((s) => [s.id, itemThumbnail(s)]))), [modelsVersion]);
   const pictures = useItemPictures(p.items);
   const roomName = (key: string) => p.rooms.find((r) => r.key === key)?.name ?? key;
   const disabled = !p.rooms.length;

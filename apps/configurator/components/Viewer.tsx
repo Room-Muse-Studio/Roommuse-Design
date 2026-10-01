@@ -12,6 +12,8 @@ import {
   type Item, type Slot,
 } from '@/lib/items';
 import { buildItem, positionItem } from '@/lib/itemMesh';
+import { preloadModels } from '@/lib/modelLoader';
+import { MODEL_SPECS } from '@/lib/models';
 import { ItemOutline } from '@/lib/outline';
 import { containsPoint } from '@/lib/walls';
 import type { Finish } from '@/lib/finishes';
@@ -32,6 +34,7 @@ import SummaryCard from './SummaryCard';
 import Toast from './Toast';
 import TopBar from './TopBar';
 import { useAuth } from './useAuth';
+import { useModelsVersion } from './useModels';
 import { useProjectSync } from './useProjectSync';
 
 const ACCENT = 0xc33a20, BLOCKED = 0x8a8f94, SWAP = 0x2f6fd6;
@@ -61,11 +64,17 @@ type DragResult =
   | { uid: number; kind: 'swap'; with: number; from: { center: Vec2; rotation: number } }
   | { uid: number; kind: 'none' };
 
-/** Free an item's geometry. Materials are shared between items and kept. */
+/** Free an item's geometry. Materials, and the geometry of a model file, are shared between items and kept. */
 function clearItems(group: THREE.Group) {
-  group.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+  group.traverse((o) => {
+    const g = (o as THREE.Mesh).geometry;
+    if (g && !g.userData.shared) g.dispose();
+  });
   group.clear();
 }
+
+/** The ids of the models the items use, each once. */
+const modelIds = (items: Item[]) => [...new Set(items.flatMap((i) => (i.builder.kind === 'model' ? [i.builder.modelId] : [])))];
 
 /** Point the camera at everything visible: from above and to one side in 3D, straight down in 2D. */
 function frame(stage: Stage) {
@@ -117,6 +126,8 @@ const toScan = (home: ViewerHome): HomeScan => ({
 export default function Viewer({ request }: { request: OpenRequest }) {
   const projectId = request.kind === 'project' ? request.id : null;
   const { user, setUser } = useAuth();
+  // Changes when a model file arrives: everything drawn from models is redrawn.
+  const modelsVersion = useModelsVersion();
   const mountRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Stage | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -327,6 +338,11 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       const room = home.rooms.find((r) => visible.has(r.key) && containsPoint(r.scan.polygon, want)) ?? home.rooms.find((r) => r.key === d.roomKey);
       const view = stage.home?.views.find((v) => v.key === room?.key);
       if (!room || !view) return;
+      // A model arriving mid-drag rebuilds every item: carry on with the new object for this one.
+      for (const v of stage.home?.views ?? []) {
+        const live = v.items.children.find((c) => c.userData.uid === d.uid);
+        if (live) d.obj = live;
+      }
       if (room.key !== d.roomKey) {
         d.roomKey = room.key;
         d.at = want;
@@ -488,6 +504,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     }
     nextUid.current = uid;
     historyReset.current = true;
+    preloadModels(modelIds(initial)); // what this design needs first; the rest of the catalogue follows when idle
     setItems(initial);
     setPicked(null);
     setTargetRoom(home.rooms[0]?.key ?? '');
@@ -499,6 +516,17 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     }
     // Deliberately keyed on the scan only; `ceilings` has its own effect.
   }, [home]);
+
+  // The whole catalogue, fetched while nothing else is going on, so the library and later adds are instant.
+  useEffect(() => {
+    const all = () => preloadModels(MODEL_SPECS.map((m) => m.id));
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(all, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(all, 2000);
+    return () => window.clearTimeout(id);
+  }, []);
 
   // Isolate one room, or show all; re-frame on the result.
   useEffect(() => {
@@ -528,7 +556,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     frame(stage);
   }, [view]);
 
-  // Redraw the items whenever they, or the rooms they stand in, change.
+  // Redraw the items whenever they, the rooms they stand in, or the model files they're drawn from change.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage?.home) return;
@@ -541,7 +569,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       positionItem(obj, item);
       view.items.add(obj);
     }
-  }, [items, home]);
+  }, [items, home, modelsVersion]);
 
   // Outline the selected item; the edit menu floats over it.
   useEffect(() => {
@@ -556,7 +584,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       stage.highlight = new ItemOutline(target, ACCENT);
       stage.selected = target;
     }
-  }, [picked, items]);
+  }, [picked, items, modelsVersion]);
 
   const roomOf = (key: string) => home?.rooms.find((r) => r.key === key);
   const roomName = (key: string) => roomOf(key)?.name ?? key;
@@ -630,7 +658,8 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     const me = pickedItem;
     if (!me) return;
     const sameKind = (i: Item) =>
-      i.builder.kind === me.builder.kind && (i.builder.kind === 'module' || (me.builder.kind === 'furniture' && i.builder.type === me.builder.type));
+      i.builder.kind === me.builder.kind
+      && (me.builder.kind !== 'furniture' || (i.builder.kind === 'furniture' && i.builder.type === me.builder.type));
     setItems((list) => list.map((i) => (i.uid === me.uid || (everywhere && sameKind(i)) ? { ...i, finishes: { ...i.finishes, [slot]: finish } } : i)));
   };
 
