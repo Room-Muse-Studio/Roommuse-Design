@@ -336,23 +336,21 @@ export default function Viewer({ request }: { request: OpenRequest }) {
       let shown = d.at;
       let clear = true;
       d.swapWith = null;
-      if (fitsAt(room.scan, size, want, rot, others)) {
+      // Over exactly one other item (in its own room): dropping here swaps them.
+      const hits = room.key === d.from.roomKey && fitsRoom(room.scan, size, want, rot) ? overlapping(size, want, rot, others) : [];
+      if (hits.length === 1) {
+        d.swapWith = hits[0].uid;
+        shown = want;
+      } else if (fitsAt(room.scan, size, want, rot, others)) {
         const snapped = snapToWall(room.scan, size, want, rot);
         d.at = snapped !== want && fitsAt(room.scan, size, snapped, rot, others) ? snapped : want;
         shown = d.at;
       } else {
-        const hits = room.key === d.from.roomKey && fitsRoom(room.scan, size, want, rot) ? overlapping(size, want, rot, others) : [];
-        if (hits.length === 1) {
-          // Over exactly one other item: dropping here swaps them.
-          d.swapWith = hits[0].uid;
-          shown = want;
-        } else {
-          // Blocked by a wall, a door or several things: slide along whichever direction is free.
-          const slide = [{ x: want.x, z: d.at.z }, { x: d.at.x, z: want.z }].find((c) => fitsAt(room.scan, size, c, rot, others));
-          if (slide) d.at = slide;
-          else clear = false;
-          shown = d.at;
-        }
+        // Blocked (by a wall, with free placement on): slide along whichever direction is free.
+        const slide = [{ x: want.x, z: d.at.z }, { x: d.at.x, z: want.z }].find((c) => fitsAt(room.scan, size, c, rot, others));
+        if (slide) d.at = slide;
+        else clear = false;
+        shown = d.at;
       }
       if (d.obj.parent !== view.items) view.items.add(d.obj);
       positionItem(d.obj, { center: shown, rotation: rot, size });

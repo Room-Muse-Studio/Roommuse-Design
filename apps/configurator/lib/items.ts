@@ -141,11 +141,18 @@ const itemObstacle = (i: Item): Obstacle =>
 const clash = (a: Obstacle, b: Obstacle) => a.bottom < b.top - 1 && b.bottom < a.top - 1 && convexOverlap(a.outline, b.outline);
 
 /** Whether an item of `size` can stand at `center`/`rotation` among `others` (items in the same room). */
+/**
+ * Free placement: while on, moving, turning, duplicating and swapping only
+ * require an item to stay inside the room (walls and ceiling). Door swings,
+ * window and archway clearances, and overlaps with other items are not
+ * enforced — the rules got in the way more than they helped. Turn off to
+ * restore them; adding a new module still uses the full rules (`freeSpot`).
+ */
+export const FREE_PLACEMENT = true;
+
 export function fitsAt(room: RoomScan, size: Size, center: Vec2, rotation: number, others: Item[]): boolean {
-  return outlineFits(room, outline(size, center, rotation), size.elevation, size.elevation + size.height, [
-    ...roomBlockers(room),
-    ...others.map(itemObstacle),
-  ]);
+  const blockers = FREE_PLACEMENT ? [] : [...roomBlockers(room), ...others.map(itemObstacle)];
+  return outlineFits(room, outline(size, center, rotation), size.elevation, size.elevation + size.height, blockers);
 }
 
 /** Whether it would fit if the other items weren't there (walls, doors and windows only). */

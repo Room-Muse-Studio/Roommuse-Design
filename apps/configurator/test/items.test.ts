@@ -21,11 +21,9 @@ test('the scan’s furniture becomes items like everything else', () => {
     ['1:Storage:storage', '2:Storage:storage', '3:Bed:bed']);
   assert.ok(items.every((i) => i.fromScan));
   assert.deepEqual(items[1].size, { width: 900, depth: 250, height: 300, elevation: 1500 }, 'the wall shelf keeps its height off the floor');
-  // A scan shows the room as it is, rules or not: the fixture's wardrobe stands 200 mm in front of the
-  // window, which a new placement wouldn't be allowed to. Everything else fits where it was scanned.
-  const [wardrobe, shelf, bed] = items;
-  assert.ok(!fitsAt(bedroomA, wardrobe.size, wardrobe.center, wardrobe.rotation, others(items, wardrobe)), 'wardrobe covers the window edge');
-  for (const i of [shelf, bed]) assert.ok(fitsAt(bedroomA, i.size, i.center, i.rotation, others(items, i)), i.name);
+  // Everything fits where it was scanned. (The fixture's wardrobe stands 200 mm in front of the
+  // window; with FREE_PLACEMENT on, window clearance isn't enforced, so it fits too.)
+  for (const i of items) assert.ok(fitsAt(bedroomA, i.size, i.center, i.rotation, others(items, i)), i.name);
 });
 
 test('scanned beds and storage stand with their backs to the nearer wall', () => {
@@ -98,9 +96,9 @@ test('a swap settles items of different sizes around each other', () => {
   assert.ok(fitsAt(room, sofa.size, swap.b.center, swap.b.rotation, [{ ...chair, ...swap.a }]));
 });
 
-test('a swap that can’t work is refused', () => {
+test('with free placement, a cramped swap still works (items may overlap)', () => {
   // A 5 m corridor: a chair at the left end, another chair 1.1 m along, a sofa at the right end.
-  // The sofa can't fit anywhere near the first chair's place with the second chair in the way.
+  // With the old rules the sofa couldn't fit near the first chair; now only the walls matter.
   const room = square(5000, 1000);
   const chairA = itemFromSpec(specById('chair')!, 1, 'r', { center: { x: 300, z: 500 }, rotation: 0 });
   const chairB = itemFromSpec(specById('chair')!, 2, 'r', { center: { x: 1400, z: 500 }, rotation: 0 });
@@ -108,13 +106,17 @@ test('a swap that can’t work is refused', () => {
   for (const [i, rest] of [[chairA, [chairB, sofa]], [chairB, [chairA, sofa]], [sofa, [chairA, chairB]]] as const) {
     assert.ok(fitsAt(room, i.size, i.center, 0, [...rest]), `${i.name} fits to start with`);
   }
-  assert.equal(swapPlaces(room, chairA, { center: chairA.center, rotation: 0 }, sofa, [chairB]), null);
+  const swap = swapPlaces(room, chairA, { center: chairA.center, rotation: 0 }, sofa, [chairB])!;
+  assert.ok(swap, 'the swap goes ahead');
+  assert.ok(fitsAt(room, sofa.size, swap.b.center, swap.b.rotation, []), 'the sofa is still inside the room');
 });
 
-test('items keep clear of door swings like cabinets do', () => {
+test('with free placement, an item may sit in a door swing; the room boundary still holds', () => {
   const walls = wallFrames(bedroomB.polygon);
   const chair = specById('chair')!;
-  // Just inside the hallway door (west wall, z 4400–5250), in its swing.
-  assert.ok(!fitsAt(bedroomB, chair.size, { x: 1500, z: 4800 }, 0, []));
+  // Just inside the hallway door (west wall, z 4400–5250), in its swing: allowed for now.
+  assert.ok(fitsAt(bedroomB, chair.size, { x: 1500, z: 4800 }, 0, []));
+  // Through the wall: never.
+  assert.ok(!fitsAt(bedroomB, chair.size, { x: -200, z: 4800 }, 0, []));
   assert.ok(walls.length === 4);
 });
