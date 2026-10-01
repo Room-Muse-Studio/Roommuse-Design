@@ -1,32 +1,37 @@
 /**
- * Everything that stands in a room — the cabinets from the library and the
- * furniture that came with the scan — is one kind of thing: an Item. Each has a
- * footprint centre and rotation (free on the floor, not tied to a wall), a
- * size, and two finishes. Items can be added, removed, moved, turned and
- * recoloured alike; they differ only in how they are drawn.
+ * Everything that stands in a room is one kind of thing: an Item, a MOZU model
+ * (lib/models.ts) with a footprint centre and rotation (free on the floor, not
+ * tied to a wall), a size, and a finish. Items from the library and items the
+ * scan came with can be added, removed, moved, turned and recoloured alike.
+ *
+ * The scan's own objects are only shown when they can be a MOZU model: storage
+ * (wardrobes, cupboards, shelves) becomes the nearest model in size; beds,
+ * sofas, tables, appliances and the rest are left out (lib/scanMatch.ts).
  *
  * Millimetres; rotation in radians in the scan's convention (it turns the
  * width axis from +x toward +z, which is clockwise seen from above). No Three.js.
  */
-import type { RoomScan, ScanObject, Vec2 } from '@mozu/scan-sdk';
-import { MODULE_GROUPS, MODULES, moduleById } from './modules';
-import { customFinish, DEFAULT_CARCASS, DEFAULT_FRONT, swatchById, type Finish } from './finishes';
-import type { FurnitureType } from './furnitureMesh';
+import type { RoomScan, Vec2 } from '@mozu/scan-sdk';
+import { DEFAULT_FRONT, type Finish } from './finishes';
+import { MODEL_GROUPS, MODEL_SPECS, modelById, type ModelGroupId, type ModelSpec } from './models';
 import { convexOverlap, findSpot, obstacles, outlineFits, type Obstacle } from './placement';
+import { isKitchen, matchStorage } from './scanMatch';
 import { containsPoint, labelPoint, pointOnWall, wallFrames, type WallFrame } from './walls';
 
+/**
+ * A MOZU model has one finish, and that's `primary`. `secondary` stays in the
+ * saved shape (every stored design and the server's checks expect both) but is
+ * never shown or edited.
+ */
 export type Slot = 'primary' | 'secondary';
 
-export type Builder =
-  | { kind: 'model'; modelId: string }
-  | { kind: 'module'; moduleId: string }
-  | { kind: 'furniture'; type: FurnitureType };
+export type Builder = { kind: 'model'; modelId: string };
 
 export interface Size {
   width: number;
   depth: number;
   height: number;
-  /** Bottom above the floor: 0 for most things, ~1450 for a kitchen wall cabinet. */
+  /** Bottom above the floor: 0 for most things, 1450 for a kitchen wall cabinet. */
   elevation: number;
 }
 
@@ -47,7 +52,7 @@ export interface Item {
 /** Something the library can add. */
 export interface ItemSpec {
   id: string;
-  group: string;
+  group: ModelGroupId;
   name: string;
   builder: Builder;
   size: Size;
@@ -59,64 +64,32 @@ export const WALL_GAP = 12;
 /** Released this close to a wall, and parallel to it, an item snaps flush. */
 export const SNAP_MM = 120;
 
-const swatch = (id: string) => swatchById(id)!;
-const steel = customFinish('#c9cacc', 'smooth', 'metallic');
+export const DEFAULT_FINISHES: Record<Slot, Finish> = { primary: DEFAULT_FRONT, secondary: DEFAULT_FRONT };
 
-/** Default finishes and what the two finish slots are called, per kind of furniture. */
-const FURNITURE_LOOK: Record<FurnitureType, { slots: Record<Slot, string>; finishes: Record<Slot, Finish> }> = {
-  bed: { slots: { primary: 'Bedding', secondary: 'Frame' }, finishes: { primary: swatch('fabric_03'), secondary: swatch('wood_oak_04') } },
-  sofa: { slots: { primary: 'Upholstery', secondary: 'Base' }, finishes: { primary: swatch('fabric_04_02'), secondary: swatch('wood_walnut_02') } },
-  armchair: { slots: { primary: 'Upholstery', secondary: 'Base' }, finishes: { primary: swatch('fabric_05'), secondary: swatch('wood_walnut_02') } },
-  table: { slots: { primary: 'Top', secondary: 'Legs' }, finishes: { primary: swatch('wood_oak_01'), secondary: swatch('hue_4_2') } },
-  desk: { slots: { primary: 'Top', secondary: 'Legs & drawer' }, finishes: { primary: swatch('wood_oak_06'), secondary: swatch('hue_1_1') } },
-  chair: { slots: { primary: 'Seat & back', secondary: 'Legs' }, finishes: { primary: swatch('wood_oak_01'), secondary: swatch('hue_4_2') } },
-  storage: { slots: { primary: 'Doors', secondary: 'Carcass' }, finishes: { primary: DEFAULT_FRONT, secondary: DEFAULT_CARCASS } },
-  television: { slots: { primary: 'Frame', secondary: 'Stand' }, finishes: { primary: swatch('hue_4_2'), secondary: swatch('hue_4_1') } },
-  appliance: { slots: { primary: 'Body', secondary: 'Handle' }, finishes: { primary: swatch('glossy_01'), secondary: steel } },
-  box: { slots: { primary: 'Finish', secondary: 'Detail' }, finishes: { primary: customFinish('#b9a58c', 'smooth', 'matte'), secondary: swatch('hue_4_1') } },
+/** What the finish slots are called. */
+export const slotNames = (_builder: Builder): Record<Slot, string> => ({ primary: 'Finish', secondary: 'Finish' });
+
+/** The slots the edit menu offers: one, for a model. */
+export const editableSlots = (_builder: Builder): Slot[] => ['primary'];
+
+/** What to call a model's kind of thing, for "use on every …". */
+const FAMILY_NAME: Record<ModelGroupId, string> = {
+  'kitchen-base': 'base cabinet', 'kitchen-wall': 'wall cabinet', 'kitchen-tall': 'tall cabinet',
+  'wardrobe-main': 'wardrobe', 'wardrobe-side': 'side cabinet',
 };
+export const groupOf = (i: Pick<Item, 'builder'>): ModelGroupId | undefined => modelById(i.builder.modelId)?.group;
+export const familyName = (i: Pick<Item, 'builder'>) => FAMILY_NAME[groupOf(i) ?? 'kitchen-base'];
+/** Items of the same kind, for a finish applied to every one of them. */
+export const sameFamily = (a: Pick<Item, 'builder'>, b: Pick<Item, 'builder'>) => groupOf(a) !== undefined && groupOf(a) === groupOf(b);
 
-export function slotNames(builder: Builder): Record<Slot, string> {
-  if (builder.kind === 'model') return { primary: 'Finish', secondary: 'Finish' };
-  return builder.kind === 'module' ? { primary: 'Doors & drawers', secondary: 'Carcass' } : FURNITURE_LOOK[builder.type].slots;
-}
+export const modelSpec = (m: ModelSpec): ItemSpec => ({
+  id: m.id, group: m.group, name: m.name, builder: { kind: 'model', modelId: m.id },
+  size: { width: m.width, depth: m.depth, height: m.height, elevation: m.elevation },
+  finishes: DEFAULT_FINISHES,
+});
 
-/** RoomPlan's object categories, drawn as the nearest kind of furniture. */
-const CATEGORY_TYPE: Record<string, FurnitureType> = {
-  bed: 'bed', sofa: 'sofa', chair: 'chair', table: 'table', storage: 'storage', television: 'television',
-  refrigerator: 'appliance', stove: 'appliance', oven: 'appliance', dishwasher: 'appliance', washerDryer: 'appliance',
-};
-
-const pretty = (category: string) => {
-  const words = category.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-};
-
-const furniture = (id: string, name: string, type: FurnitureType, width: number, depth: number, height: number): ItemSpec =>
-  ({ id, group: 'furniture', name, builder: { kind: 'furniture', type }, size: { width, depth, height, elevation: 0 }, finishes: FURNITURE_LOOK[type].finishes });
-
-export const ITEM_GROUPS: { id: string; name: string; short: string }[] = [
-  ...MODULE_GROUPS.map((g) => ({ ...g, short: { 'kitchen-base': 'Base', 'kitchen-wall': 'Wall', 'kitchen-tall': 'Tall', wardrobe: 'Wardrobes', living: 'Living' }[g.id] })),
-  { id: 'furniture', name: 'Furniture', short: 'Furniture' },
-];
-
-export const ITEM_SPECS: ItemSpec[] = [
-  ...MODULES.map((m): ItemSpec => ({
-    id: m.id, group: m.group, name: m.name, builder: { kind: 'module', moduleId: m.id },
-    size: { width: m.width, depth: m.depth, height: m.height, elevation: m.elevation },
-    finishes: { primary: DEFAULT_FRONT, secondary: DEFAULT_CARCASS },
-  })),
-  furniture('bed-double', 'Double bed', 'bed', 1400, 2000, 1000),
-  furniture('bed-single', 'Single bed', 'bed', 900, 2000, 950),
-  furniture('sofa-3', 'Sofa, 3 seats', 'sofa', 2100, 900, 820),
-  furniture('armchair', 'Armchair', 'armchair', 850, 850, 820),
-  furniture('table-dining', 'Dining table', 'table', 1600, 900, 750),
-  furniture('desk', 'Desk', 'desk', 1200, 600, 750),
-  furniture('chair', 'Chair', 'chair', 450, 500, 850),
-  furniture('storage-800', 'Storage cupboard', 'storage', 800, 450, 1800),
-  furniture('tv-55', 'TV, 55"', 'television', 1230, 250, 780),
-];
-
+export const ITEM_GROUPS = MODEL_GROUPS;
+export const ITEM_SPECS: ItemSpec[] = MODEL_SPECS.map(modelSpec);
 export const specById = (id: string) => ITEM_SPECS.find((s) => s.id === id);
 
 // ── geometry ────────────────────────────────────────────────────────────────
@@ -144,16 +117,16 @@ const itemObstacle = (i: Item): Obstacle =>
 
 const clash = (a: Obstacle, b: Obstacle) => a.bottom < b.top - 1 && b.bottom < a.top - 1 && convexOverlap(a.outline, b.outline);
 
-/** Whether an item of `size` can stand at `center`/`rotation` among `others` (items in the same room). */
 /**
  * Free placement: while on, moving, turning, duplicating and swapping only
  * require an item to stay inside the room (walls and ceiling). Door swings,
  * window and archway clearances, and overlaps with other items are not
  * enforced — the rules got in the way more than they helped. Turn off to
- * restore them; adding a new module still uses the full rules (`freeSpot`).
+ * restore them; adding a new item still uses the full rules (`freeSpot`).
  */
 export const FREE_PLACEMENT = true;
 
+/** Whether an item of `size` can stand at `center`/`rotation` among `others` (items in the same room). */
 export function fitsAt(room: RoomScan, size: Size, center: Vec2, rotation: number, others: Item[]): boolean {
   const blockers = FREE_PLACEMENT ? [] : [...roomBlockers(room), ...others.map(itemObstacle)];
   return outlineFits(room, outline(size, center, rotation), size.elevation, size.elevation + size.height, blockers);
@@ -213,8 +186,8 @@ export function snapToWall(room: RoomScan, size: Size, center: Vec2, rotation: n
 export function swapPlaces(
   room: RoomScan, a: Item, aFrom: { center: Vec2; rotation: number }, b: Item, rest: Item[],
 ): { a: { center: Vec2; rotation: number }; b: { center: Vec2; rotation: number } } | null {
-  // Two items of very different size (a desk and a bed) can't land on each other's exact
-  // centre, so allow settling further the more their sizes differ.
+  // Two items of very different size (a side cabinet and a wardrobe) can't land on each
+  // other's exact centre, so allow settling further the more their sizes differ.
   const long = (i: Item) => Math.max(i.size.width, i.size.depth);
   const reach = 400 + Math.abs(long(a) - long(b));
   for (const [ra, rb] of [[b.rotation, aFrom.rotation], [aFrom.rotation, b.rotation]] as const) {
@@ -228,18 +201,15 @@ export function swapPlaces(
 }
 
 /**
- * Where a new item goes. Cabinets start against a wall (longest first); other
- * furniture, and cabinets when the walls are full, at the free floor spot nearest
- * the middle of the room.
+ * Where a new item goes: against a wall (longest first), facing into the
+ * room; when the walls are full, at the free floor spot nearest the middle.
  */
 export function freeSpot(room: RoomScan, spec: Pick<ItemSpec, 'builder' | 'size'>, others: Item[]): { center: Vec2; rotation: number } | null {
   const walls = wallFrames(room.polygon);
-  if (spec.builder.kind === 'module' || spec.builder.kind === 'model') {
-    const spot = findSpot({ ...room, objects: [] }, spec.size, [], WALL_GAP, others.map(itemObstacle));
-    if (spot) {
-      const wall = walls[spot.wall];
-      return { center: pointOnWall(wall, spot.u + spec.size.width / 2, WALL_GAP + spec.size.depth / 2), rotation: facing(wall) };
-    }
+  const spot = findSpot({ ...room, objects: [] }, spec.size, [], WALL_GAP, others.map(itemObstacle));
+  if (spot) {
+    const wall = walls[spot.wall];
+    return { center: pointOnWall(wall, spot.u + spec.size.width / 2, WALL_GAP + spec.size.depth / 2), rotation: facing(wall) };
   }
   const middle = labelPoint(room.polygon);
   for (const rotation of [0, Math.PI / 2]) {
@@ -255,9 +225,6 @@ export function freeSpot(room: RoomScan, spec: Pick<ItemSpec, 'builder' | 'size'
   return null;
 }
 
-/** Furniture that normally stands with its back to a wall. */
-const BACK_TO_WALL = new Set<FurnitureType>(['bed', 'sofa', 'armchair', 'storage', 'television', 'appliance']);
-
 /** Distance from a point to the nearest wall of the room. */
 function toWall(room: RoomScan, p: Vec2): number {
   let best = Infinity;
@@ -272,39 +239,57 @@ function toWall(room: RoomScan, p: Vec2): number {
 
 /**
  * A scan says where something is and which way its width runs, not which end
- * is its back. For furniture that stands back-to-wall (a bed's headboard, a
- * sofa's back), turn it so the back is the end nearer a wall.
+ * is its back. Storage stands back-to-wall, so turn it so the back is the end
+ * nearer a wall.
  */
-function backToNearerWall(room: RoomScan, type: FurnitureType, center: Vec2, rotation: number, depth: number): number {
-  if (!BACK_TO_WALL.has(type)) return rotation;
+export function backToNearerWall(room: RoomScan, center: Vec2, rotation: number, depth: number): number {
   const f = frontOf(rotation);
   const front = { x: center.x + (f.x * depth) / 2, z: center.z + (f.z * depth) / 2 };
   const back = { x: center.x - (f.x * depth) / 2, z: center.z - (f.z * depth) / 2 };
   return toWall(room, front) < toWall(room, back) ? (rotation + Math.PI) % (Math.PI * 2) : rotation;
 }
 
-/** The furniture a scan came with, as items. */
+/**
+ * The centre of a model standing where a scanned (or previously stored) box
+ * stood, with the same back face: the model is usually a different depth, so
+ * its centre moves along the front direction by half the difference. Keeps a
+ * wardrobe scanned against a wall against that wall.
+ */
+export function keepBackFace(center: Vec2, rotation: number, storedDepth: number, modelDepth: number): Vec2 {
+  const f = frontOf(rotation);
+  const shift = (modelDepth - storedDepth) / 2;
+  return { x: center.x + f.x * shift, z: center.z + f.z * shift };
+}
+
+/**
+ * The scan's storage as items, each the nearest MOZU model in size (its size,
+ * hung where the scan found it); everything else in the scan is left out.
+ * Uids are consecutive from `firstUid`.
+ */
 export function itemsFromScan(roomKey: string, room: RoomScan, firstUid: number): Item[] {
-  return room.objects.map((o: ScanObject, i) => {
-    const type = CATEGORY_TYPE[o.category] ?? 'box';
-    return {
-      uid: firstUid + i,
+  const kitchen = isKitchen(room);
+  const out: Item[] = [];
+  for (const o of room.objects) {
+    if (o.category !== 'storage') continue;
+    const model = matchStorage({ width: o.width, depth: o.depth, height: o.height ?? 800, elevation: o.elevation ?? 0 }, kitchen);
+    if (!model) continue;
+    const rotation = backToNearerWall(room, o.center, o.rotation, o.depth);
+    out.push({
+      uid: firstUid + out.length,
       roomKey,
-      name: pretty(o.category),
-      builder: { kind: 'furniture', type },
-      size: { width: o.width, depth: o.depth, height: o.height ?? 800, elevation: o.elevation ?? 0 },
-      center: { ...o.center },
-      rotation: backToNearerWall(room, type, o.center, o.rotation, o.depth),
-      finishes: FURNITURE_LOOK[type].finishes,
+      name: model.name,
+      builder: { kind: 'model', modelId: model.id },
+      size: { width: model.width, depth: model.depth, height: model.height, elevation: o.elevation ?? model.elevation },
+      center: keepBackFace(o.center, rotation, o.depth, model.depth),
+      rotation,
+      finishes: DEFAULT_FINISHES,
       fromScan: true,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /** A new item from the library. */
 export function itemFromSpec(spec: ItemSpec, uid: number, roomKey: string, at: { center: Vec2; rotation: number }): Item {
   return { uid, roomKey, name: spec.name, builder: spec.builder, size: { ...spec.size }, center: at.center, rotation: at.rotation, finishes: spec.finishes };
 }
-
-export const isModule = (i: Item) => i.builder.kind === 'module';
-export const moduleOf = (i: Item) => (i.builder.kind === 'module' ? moduleById(i.builder.moduleId) : undefined);

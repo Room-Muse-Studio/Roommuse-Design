@@ -8,7 +8,7 @@ import { scanFromParams, type HomeScan, type RoomScan, type Vec2 } from '@mozu/s
 import { loadHome, type ViewerHome } from '@/lib/home';
 import { buildHome, setVisible, type RoomView } from '@/lib/scene';
 import {
-  fitsAt, fitsRoom, freeSpot, itemFromSpec, itemsFromScan, overlapping, settle, snapToWall, specById, swapPlaces,
+  fitsAt, fitsRoom, freeSpot, itemFromSpec, itemsFromScan, overlapping, sameFamily, settle, snapToWall, specById, swapPlaces,
   type Item, type Slot,
 } from '@/lib/items';
 import { buildItem, positionItem } from '@/lib/itemMesh';
@@ -653,14 +653,11 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     setItems((list) => list.map((i) => (i.uid === item.uid ? { ...i, rotation, center } : i)));
   };
 
-  /** A finish for the selected item, or for every item of the same kind. */
+  /** A finish for the selected item, or for every item of the same kind (every wardrobe, every base cabinet…). */
   const setFinish = (slot: Slot, finish: Finish, everywhere: boolean) => {
     const me = pickedItem;
     if (!me) return;
-    const sameKind = (i: Item) =>
-      i.builder.kind === me.builder.kind
-      && (me.builder.kind !== 'furniture' || (i.builder.kind === 'furniture' && i.builder.type === me.builder.type));
-    setItems((list) => list.map((i) => (i.uid === me.uid || (everywhere && sameKind(i)) ? { ...i, finishes: { ...i.finishes, [slot]: finish } } : i)));
+    setItems((list) => list.map((i) => (i.uid === me.uid || (everywhere && sameFamily(i, me)) ? { ...i, finishes: { ...i.finishes, [slot]: finish } } : i)));
   };
 
   // Keys: ⌘Z / ⇧⌘Z undo and redo; Delete removes the selected item, R turns it (Shift: 15°), Escape deselects. Not while typing.

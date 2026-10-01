@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ITEM_GROUPS, ITEM_SPECS, type Item } from '@/lib/items';
+import { preloadModels } from '@/lib/modelLoader';
 import { itemThumbnail } from '@/lib/thumbnails';
 import { useModelsVersion } from './useModels';
 import { Icon, type IconName } from './Icons';
@@ -19,24 +20,14 @@ export interface RailSection {
 
 export const RAIL_SECTIONS: RailSection[] = [
   {
-    id: 'kitchen', label: 'Kitchen', icon: 'kitchen', eyebrow: 'Kitchen / modules', title: 'Kitchen',
-    description: 'Base, wall and tall cabinets. They start against a wall; drag them where you want them.',
+    id: 'kitchen', label: 'Kitchen', icon: 'kitchen', eyebrow: 'Kitchen / MOZU', title: 'Kitchen',
+    description: 'MOZU base, wall and tall cabinets. They start against a wall; drag them where you want them.',
     tabs: [{ id: 'kitchen-base', label: 'Base' }, { id: 'kitchen-wall', label: 'Wall' }, { id: 'kitchen-tall', label: 'Tall' }],
   },
   {
-    id: 'wardrobe', label: 'Wardrobes', icon: 'wardrobe', eyebrow: 'Wardrobes / modules', title: 'Wardrobes',
-    description: 'Hinged and sliding wardrobes, floor to ceiling.',
-    tabs: [{ id: 'wardrobe', label: 'All' }],
-  },
-  {
-    id: 'living', label: 'Living', icon: 'living', eyebrow: 'Living / modules', title: 'Living & storage',
-    description: 'Sideboards, shelving and media units for living rooms.',
-    tabs: [{ id: 'living', label: 'All' }],
-  },
-  {
-    id: 'furniture', label: 'Furniture', icon: 'furniture', eyebrow: 'Furniture / loose', title: 'Furniture',
-    description: 'Beds, sofas, tables and chairs, placed on the open floor.',
-    tabs: [{ id: 'furniture', label: 'All' }],
+    id: 'wardrobe', label: 'Wardrobes', icon: 'wardrobe', eyebrow: 'Wardrobes / MOZU', title: 'Wardrobes',
+    description: 'MOZU wardrobes and the side cabinets that go with them.',
+    tabs: [{ id: 'wardrobe-main', label: 'Main' }, { id: 'wardrobe-side', label: 'Side' }],
   },
 ];
 
@@ -74,6 +65,8 @@ export function useItemPictures(items: Item[]) {
 export default function ItemDrawer(p: Props) {
   const [tab, setTab] = useState(p.section.tabs[0].id);
   useEffect(() => setTab(p.section.tabs[0].id), [p.section.id]);
+  // The models on show get fetched first, so their pictures turn real before the rest of the catalogue's.
+  useEffect(() => preloadModels(ITEM_SPECS.filter((s) => s.group === tab).map((s) => s.id)), [tab]);
   // Library pictures are rendered with WebGL, so only in the browser, after the first paint,
   // and again as model files arrive (a model's picture is a plain box until then).
   const [library, setLibrary] = useState<Record<string, string>>({});

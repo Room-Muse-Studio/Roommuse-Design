@@ -1,7 +1,7 @@
 'use client';
 
 import { forwardRef, useEffect, useState } from 'react';
-import { slotNames, type Item, type Slot } from '@/lib/items';
+import { editableSlots, familyName, slotNames, type Item, type Slot } from '@/lib/items';
 import {
   PATTERNS, SHEENS, SWATCHES, SWATCH_FAMILIES, customFinish, finishPreview,
   type Finish, type Pattern, type Sheen,
@@ -49,6 +49,7 @@ const ItemToolbar = forwardRef<HTMLDivElement, Props>(function ItemToolbar(
     setFamily(item.finishes.primary.family);
   }, [item.uid]); // not on every finish change
   const names = slotNames(item.builder);
+  const slots = editableSlots(item.builder);
   const finish = item.finishes[slot];
   const setCustom = (change: Partial<Pick<Finish, 'color' | 'pattern' | 'sheen'>>) => {
     const next = { color: finish.color, pattern: finish.pattern, sheen: finish.sheen, ...change };
@@ -83,15 +84,17 @@ const ItemToolbar = forwardRef<HTMLDivElement, Props>(function ItemToolbar(
 
       {open && (
         <div className="toolbar-finish">
-          <div className="tabs" role="tablist" aria-label="Part">
-            {(['primary', 'secondary'] as const).map((s) => (
-              <button key={s} type="button" role="tab" aria-selected={slot === s} className={slot === s ? 'on' : ''}
-                onClick={() => { setSlot(s); setFamily(item.finishes[s].family); }}>
-                <i style={{ backgroundColor: item.finishes[s].color, backgroundImage: `url(${finishPreview(item.finishes[s])})` }} />
-                {names[s]}
-              </button>
-            ))}
-          </div>
+          {slots.length > 1 && (
+            <div className="tabs" role="tablist" aria-label="Part">
+              {slots.map((s) => (
+                <button key={s} type="button" role="tab" aria-selected={slot === s} className={slot === s ? 'on' : ''}
+                  onClick={() => { setSlot(s); setFamily(item.finishes[s].family); }}>
+                  <i style={{ backgroundColor: item.finishes[s].color, backgroundImage: `url(${finishPreview(item.finishes[s])})` }} />
+                  {names[s]}
+                </button>
+              ))}
+            </div>
+          )}
           <p className="current-finish">{finish.name} <small>· {finish.family}</small></p>
           <div className="pills small" role="tablist" aria-label="Finish family">
             {[...SWATCH_FAMILIES, CUSTOM].map((f) => (
@@ -127,7 +130,7 @@ const ItemToolbar = forwardRef<HTMLDivElement, Props>(function ItemToolbar(
             </div>
           )}
           <button type="button" className="link" onClick={() => onFinish(slot, finish, true)}>
-            Use on the {names[slot].toLowerCase()} of every {item.builder.kind === 'module' ? 'cabinet' : item.name.toLowerCase()}
+            Use on every {familyName(item)}
           </button>
         </div>
       )}

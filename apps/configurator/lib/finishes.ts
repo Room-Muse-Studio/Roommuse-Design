@@ -1,5 +1,5 @@
 /**
- * Finishes: what a module's fronts and carcass are made of.
+ * Finishes: what a model's surface is made of.
  *
  * A finish is a colour, a surface pattern and a sheen. The swatches are MOZU's
  * surface range (names and representative colours from the iPad catalogue,
@@ -98,7 +98,6 @@ export const customFinish = (color: string, pattern: Pattern, sheen: Sheen): Fin
   ({ id: 'custom', name: 'Custom', family: 'Custom', color, pattern, sheen });
 
 export const DEFAULT_FRONT = swatchById('hue_1_1')!;
-export const DEFAULT_CARCASS = swatchById('hue_2_1')!;
 
 // ── generated patterns ──────────────────────────────────────────────────────
 
