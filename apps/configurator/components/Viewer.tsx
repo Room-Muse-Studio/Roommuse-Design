@@ -21,6 +21,7 @@ import { api, ApiError, createProject, fetchScanByCode, renameProject, type Proj
 import { captureThumbnail } from '@/lib/capture';
 import { bbox } from '@/lib/dimensions';
 import { stashGuestWork, takeGuestStash } from '@/lib/guestStash';
+import { migrateItems } from '@/lib/migrate';
 import { canRedo, canUndo, emptyHistory, record, redo, undo, type History } from '@/lib/history';
 import { DEFAULT_SAMPLE, type OpenRequest } from '@/lib/openRequest';
 import { defaultProjectName, sourceOf, statusText, subtitleText, type Origin, type SyncState } from '@/lib/status';
@@ -208,7 +209,8 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     projectId,
     items,
     onLoad: (rec: ProjectRecord) => {
-      open(JSON.stringify(rec.scan), { kind: 'project', source: rec.project.source }, { items: rec.design?.items ?? null, project: true });
+      // Designs saved before the MOZU catalogue are brought up to date here; nothing is written back until the person edits.
+      open(JSON.stringify(rec.scan), { kind: 'project', source: rec.project.source }, { items: rec.design ? migrateItems(rec.design.items) : null, project: true });
     },
     capture: () => {
       const s = stageRef.current;
@@ -725,7 +727,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
           return;
         }
         autoSave.current = true;
-        open(JSON.stringify(stash.scan), stash.origin, { items: stash.items });
+        open(JSON.stringify(stash.scan), stash.origin, { items: migrateItems(stash.items) });
         return;
       }
       default: void openSample(DEFAULT_SAMPLE);
