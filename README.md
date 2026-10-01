@@ -14,6 +14,8 @@ phone app ──scan──▶ MOZU web (Vercel) ──6-character code──▶ 
 |---|---|
 | `apps/ios/` | The scanning app (Swift, RoomPlan + LiDAR, socket detection) |
 | `apps/configurator/` | The website: RoomMuse configurator (Next.js + Three.js), built as a static site; see below |
+| `apps/configurator/models/mozu/` | MOZU's 30 cabinet and wardrobe models (GLB), measured into `apps/configurator/lib/models.manifest.json` |
+| `tools/mozu/` | The models' CAD sources (STEP), the size report that came with them, and the scripts that made the GLBs; reference only |
 | `packages/scan-sdk/` | The shared `mozu.roomscan/1` (one room) and `mozu.homescan/1` (several rooms) formats and floorplan engine |
 | `server/handoff-store.js` | Codes: 6 characters, 24 hours, stored in Redis (production) or memory (laptop) |
 | `server/app-store.js` | Users, sessions and projects on the same Redis / memory store |
@@ -33,8 +35,25 @@ Node 20 or newer. Run `npm install` once (and after pulling changes).
 
 The website. It opens a scan by **Code from the phone**, from a `/scan/B7K4M2` link, from a sample, or from a
 `mozu.roomscan/1` / `mozu.homescan/1` file, with every room at its real position. The **Rooms** menu isolates one;
-**Show ceilings** adds ceilings. The right-hand panel adds cabinets and furniture; click an item for its menu
-(rotate, colour and texture, remove), drag it to move it, drop it on another to swap them.
+**Show ceilings** adds ceilings. The library on the left adds MOZU's products; click an item for its menu
+(rotate, finish, remove), drag it to move it, drop it on another to swap them.
+
+**The catalogue is MOZU's range**, 30 models: kitchen base cabinets KF01–08, wall cabinets KH01–04 (hung at
+1450 mm), tall cabinets KT01–06, wardrobes W04–W10 and side cabinets W01–03 / ADJ1–2. Each is a GLB in
+`apps/configurator/models/mozu/` with one finish (colour, texture, sheen) you can change per item or for every
+item of the same kind. The build copies the files into `public/models/mozu/`.
+
+- `apps/configurator/lib/models.manifest.json` is what the library, placement and scan matching trust: each
+  model's size in millimetres, its group, and which way its doors face in the file (`front`: `+z` by default;
+  `+x`/`-x` for files whose width runs along z, which also swaps the measured width and depth). After adding
+  or replacing a model file, run `npm run models:measure -w apps/configurator` to rewrite it; `front`, `name`
+  and `elevation` edited by hand survive a re-run, so a model whose doors face the wall is fixed by changing
+  its `front` line and re-running. The build refuses to start if the files and the manifest disagree.
+- **What a scan shows:** only storage becomes an item (a wardrobe, cupboard or shelf RoomPlan found), and it
+  becomes the closest MOZU model in size: wall-hung things become wall cabinets, low things base or side
+  cabinets, tall things wardrobes (kitchen tall units only in a kitchen). Beds, sofas, tables, chairs,
+  televisions and appliances are in the scan but aren't shown. A design saved before this catalogue opens with
+  its old cabinets as the nearest MOZU models; nothing is written back until you edit.
 
 **Saving:** a code is only the way a scan gets from the phone to the laptop: it carries the scan, for 24 hours, and
 anyone who has it can load the scan. Signed in, the scan becomes a **project** in your account (**My projects** at
@@ -180,8 +199,8 @@ plug in and press ⌘R again to refresh it.
 2. On the floorplan screen, tap **Send to MOZU web**. A 6-character code appears, e.g. `B7K4M2`.
 3. On any computer, open the production address, type the code into **Code from the phone** (upper or lower case,
    dashes and spaces are fine) and click **Load**. Or open the address the phone shows (`…/scan/B7K4M2`).
-4. The room appears in 3D with its doors, windows, sockets and the furniture the scan found. Add cabinets and
-   furniture from the right-hand panel.
+4. The room appears in 3D with its doors, windows, sockets and any wardrobes or cupboards the scan found (as the
+   nearest MOZU models). Add cabinets and wardrobes from the library on the left.
 
 Codes last 24 hours. If a code has expired, tap **Send to MOZU web** again; you don't need to rescan.
 
@@ -197,7 +216,8 @@ in their real positions, and the configurator shows the whole home.
 npm start          # builds the site, then http://localhost:3000 with codes, sessions and projects kept in memory
 npm run serve      # the same without rebuilding
 npm test           # stores, handoff / auth / projects APIs, rate limits, /scan links, Vercel functions
-npm run test:viewer  # the configurator: walls, placement, items, loading
+npm run test:viewer  # the configurator: walls, placement, items, models, scan matching, migration, loading
+npm run models:measure -w apps/configurator  # re-measure the MOZU model files into lib/models.manifest.json
 ```
 
 `npm start` uses Redis instead of memory if `KV_REST_API_URL` and `KV_REST_API_TOKEN` are set (for example
@@ -233,7 +253,7 @@ the app's **Advanced → MOZU web address** field. **Reset** there returns to pr
   claimed with an atomic `SET NX`, so two uploads can never get the same code.
 - **The configurator** fetches `GET /api/scan-handoff?code=…` and reads the scan with the SDK: any polygon
   (L-shaped rooms included), walls with doors and windows cut in, sockets at their height, and the scanned
-  furniture as items you can move, recolour or remove.
+  storage as MOZU models you can move, recolour or remove (see *The configurator* above for what is and isn't shown).
 - The server parses scans with the built SDK (`packages/scan-sdk/dist`), sockets included; the configurator uses
   its source. After changing `packages/scan-sdk/src`, rebuild it: `npm run build -w packages/scan-sdk` (CI fails if
   `dist` is out of date).
