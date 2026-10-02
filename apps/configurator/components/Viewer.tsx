@@ -8,7 +8,7 @@ import { scanFromParams, type HomeScan, type RoomScan, type Vec2 } from '@mozu/s
 import { loadHome, type ViewerHome } from '@/lib/home';
 import { buildHome, setVisible, type RoomView } from '@/lib/scene';
 import {
-  fitsAt, fitsRoom, freeSpot, itemFromSpec, itemsFromScan, overlapping, sameFamily, settle, snapToWall, specById, swapPlaces,
+  fitsAt, fitsRoom, freeSpot, itemFromSpec, overlapping, sameFamily, settle, snapToWall, specById, swapPlaces,
   type Item, type Slot,
 } from '@/lib/items';
 import { buildItem, positionItem } from '@/lib/itemMesh';
@@ -503,7 +503,8 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     replaceItems(h.present);
   };
 
-  // A new scan: rebuild the rooms, and start from the furniture it came with (or the saved design).
+  // A new scan: rebuild the rooms, and start empty (or from the saved design). Nothing the scan
+  // detected — furniture, cupboards, appliances — is placed: the room is a blank canvas for MOZU's range.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !home) return;
@@ -513,11 +514,7 @@ export default function Viewer({ request }: { request: OpenRequest }) {
     stage.home = built;
     setSelected(ALL);
     let uid = 1;
-    let initial = home.rooms.flatMap((r) => {
-      const list = itemsFromScan(r.key, r.scan, uid);
-      uid += list.length;
-      return list;
-    });
+    let initial: Item[] = [];
     if (pendingItems.current) {
       initial = pendingItems.current;
       pendingItems.current = null;

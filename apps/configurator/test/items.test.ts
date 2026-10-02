@@ -2,10 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { RoomScan } from '@mozu/scan-sdk';
 import {
-  DEFAULT_FINISHES, fitsAt, freeSpot, frontOf, itemFromSpec, itemsFromScan, outline, overlapping, sameFamily, snapToWall, specById,
+  DEFAULT_FINISHES, fitsAt, freeSpot, frontOf, itemFromSpec, outline, overlapping, sameFamily, snapToWall, specById,
   swapPlaces, WALL_GAP, type Item, type ItemSpec,
 } from '../lib/items';
-import { modelById } from '../lib/models';
 import { containsPoint, wallFrames } from '../lib/walls';
 import { twoBedroom } from './fixtures';
 
@@ -20,23 +19,11 @@ const boxSpec = (id: string, width: number, depth: number, height: number): Item
   ({ id, group: 'kitchen-base', name: id, builder: { kind: 'model', modelId: 'KF01' }, size: { width, depth, height, elevation: 0 }, finishes: DEFAULT_FINISHES });
 const chair = boxSpec('chair', 450, 500, 850), sofa = boxSpec('sofa', 2100, 900, 820);
 
-test('the scan’s storage becomes the nearest MOZU models; the bed is left out', () => {
-  const items = itemsFromScan('a', bedroomA, 1);
-  const wardrobe = modelById('W05')!, shelf = modelById('KH04')!;
-  assert.deepEqual(items.map((i) => `${i.uid}:${i.builder.modelId}:${i.name}`), [`1:W05:${wardrobe.name}`, `2:KH04:${shelf.name}`]);
-  assert.ok(items.every((i) => i.fromScan));
-  assert.deepEqual(items[0].size, { width: wardrobe.width, depth: wardrobe.depth, height: wardrobe.height, elevation: 0 }, 'the model’s size, not the scanned one');
-  assert.deepEqual(items[1].size, { width: shelf.width, depth: shelf.depth, height: shelf.height, elevation: 1500 }, 'the wall shelf keeps its scanned height off the floor');
-  // The scanned wardrobe's back was on the north wall (z = 0); the model, a different depth, keeps that back face.
-  const back = outline(items[0].size, items[0].center, items[0].rotation).map((p) => p.z);
-  assert.equal(Math.round(Math.min(...back)), 0);
-  for (const i of items) assert.ok(fitsAt(bedroomA, i.size, i.center, i.rotation, others(items, i)), i.name);
-  assert.deepEqual(itemsFromScan('b', bedroomB, 1), [], 'a bed and a desk are not MOZU products');
-});
-
-test('scanned storage stands with its back to the nearer wall', () => {
-  const wardrobe = itemsFromScan('a', bedroomA, 1)[0]; // x 3600–4800, z 0–600, against the north wall
-  assert.ok(frontOf(wardrobe.rotation).z > 0.99, 'wardrobe faces south, into the room');
+test('a scan places nothing: the configurator has no way to turn scanned objects into items', async () => {
+  // The rooms in the sample do contain storage, beds and a desk; none of them becomes an item.
+  assert.ok(bedroomA.objects.length > 0 && bedroomB.objects.length > 0);
+  const items = await import('../lib/items');
+  assert.equal('itemsFromScan' in items, false);
 });
 
 test('rotating clockwise turns the front from south to west, seen from above', () => {

@@ -1,12 +1,13 @@
 /**
  * Everything that stands in a room is one kind of thing: an Item, a MOZU model
  * (lib/models.ts) with a footprint centre and rotation (free on the floor, not
- * tied to a wall), a size, and a finish. Items from the library and items the
- * scan came with can be added, removed, moved, turned and recoloured alike.
+ * tied to a wall), a size, and a finish. Items can be added, removed, moved,
+ * turned and recoloured alike.
  *
- * The scan's own objects are only shown when they can be a MOZU model: storage
- * (wardrobes, cupboards, shelves) becomes the nearest model in size; beds,
- * sofas, tables, appliances and the rest are left out (lib/scanMatch.ts).
+ * A scan contributes only the room (walls, openings, fixtures): none of the
+ * objects it detected — furniture, cupboards, appliances — becomes an item, so
+ * a new room starts empty. Old saved designs may still hold items marked
+ * `fromScan`; they stay as saved.
  *
  * Millimetres; rotation in radians in the scan's convention (it turns the
  * width axis from +x toward +z, which is clockwise seen from above). No Three.js.
@@ -15,7 +16,6 @@ import type { RoomScan, Vec2 } from '@mozu/scan-sdk';
 import { DEFAULT_FRONT, type Finish } from './finishes';
 import { MODEL_GROUPS, MODEL_SPECS, modelById, type ModelGroupId, type ModelSpec } from './models';
 import { convexOverlap, findSpot, obstacles, outlineFits, type Obstacle } from './placement';
-import { isKitchen, matchStorage } from './scanMatch';
 import { containsPoint, labelPoint, pointOnWall, wallFrames, type WallFrame } from './walls';
 
 /**
@@ -227,30 +227,6 @@ export function freeSpot(room: RoomScan, spec: Pick<ItemSpec, 'builder' | 'size'
   return null;
 }
 
-/** Distance from a point to the nearest wall of the room. */
-function toWall(room: RoomScan, p: Vec2): number {
-  let best = Infinity;
-  for (const w of wallFrames(room.polygon)) {
-    const rel = { x: p.x - w.start.x, z: p.z - w.start.z };
-    const t = Math.max(0, Math.min(w.length, rel.x * w.dir.x + rel.z * w.dir.z));
-    const q = pointOnWall(w, t);
-    best = Math.min(best, Math.hypot(p.x - q.x, p.z - q.z));
-  }
-  return best;
-}
-
-/**
- * A scan says where something is and which way its width runs, not which end
- * is its back. Storage stands back-to-wall, so turn it so the back is the end
- * nearer a wall.
- */
-export function backToNearerWall(room: RoomScan, center: Vec2, rotation: number, depth: number): number {
-  const f = frontOf(rotation);
-  const front = { x: center.x + (f.x * depth) / 2, z: center.z + (f.z * depth) / 2 };
-  const back = { x: center.x - (f.x * depth) / 2, z: center.z - (f.z * depth) / 2 };
-  return toWall(room, front) < toWall(room, back) ? (rotation + Math.PI) % (Math.PI * 2) : rotation;
-}
-
 /**
  * The centre of a model standing where a scanned (or previously stored) box
  * stood, with the same back face: the model is usually a different depth, so
@@ -261,34 +237,6 @@ export function keepBackFace(center: Vec2, rotation: number, storedDepth: number
   const f = frontOf(rotation);
   const shift = (modelDepth - storedDepth) / 2;
   return { x: center.x + f.x * shift, z: center.z + f.z * shift };
-}
-
-/**
- * The scan's storage as items, each the nearest MOZU model in size (its size,
- * hung where the scan found it); everything else in the scan is left out.
- * Uids are consecutive from `firstUid`.
- */
-export function itemsFromScan(roomKey: string, room: RoomScan, firstUid: number): Item[] {
-  const kitchen = isKitchen(room);
-  const out: Item[] = [];
-  for (const o of room.objects) {
-    if (o.category !== 'storage') continue;
-    const model = matchStorage({ width: o.width, depth: o.depth, height: o.height ?? 800, elevation: o.elevation ?? 0 }, kitchen);
-    if (!model) continue;
-    const rotation = backToNearerWall(room, o.center, o.rotation, o.depth);
-    out.push({
-      uid: firstUid + out.length,
-      roomKey,
-      name: model.name,
-      builder: { kind: 'model', modelId: model.id },
-      size: { width: model.width, depth: model.depth, height: model.height, elevation: o.elevation ?? model.elevation },
-      center: keepBackFace(o.center, rotation, o.depth, model.depth),
-      rotation,
-      finishes: DEFAULT_FINISHES,
-      fromScan: true,
-    });
-  }
-  return out;
 }
 
 /** A new item from the library. */

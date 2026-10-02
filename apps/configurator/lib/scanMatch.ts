@@ -1,18 +1,15 @@
 /**
- * Which MOZU model a scanned piece of storage stands for.
+ * Which MOZU model a cabinet of a given size stands for. Used to migrate old
+ * saved designs (lib/migrate.ts) whose cabinets predate the MOZU catalogue;
+ * scans no longer place anything (lib/items.ts).
  *
- * The configurator shows MOZU's range and nothing else, so a wardrobe or
- * cupboard the scan found is shown as the MOZU model nearest its size, and a
- * bed, sofa, table or appliance isn't shown at all (lib/items.ts decides what
- * reaches here). Nearest means closest footprint and, counting double, height:
- * a tall unit must not become a base unit because its width happened to agree.
- * The groups considered depend on where the scanned thing stands (hung on the
- * wall, low, or tall) and whether the room is a kitchen, so a bedroom wardrobe
- * never becomes a kitchen tall unit.
+ * Nearest means closest footprint and, counting double, height: a tall unit
+ * must not become a base unit because its width happened to agree. The groups
+ * considered depend on where the thing stands (hung on the wall, low, or tall)
+ * and whether kitchen tall units are allowed.
  *
  * Millimetres, pure.
  */
-import type { RoomScan } from '@mozu/scan-sdk';
 import { modelsIn, type ModelGroupId, type ModelSpec } from './models';
 
 export interface Measured {
@@ -22,9 +19,6 @@ export interface Measured {
   /** Bottom above the floor. */
   elevation: number;
 }
-
-/** A kitchen by RoomPlan's room type, or by name when the type is missing. */
-export const isKitchen = (room: Pick<RoomScan, 'type' | 'name'>) => /kitchen/i.test(room.type ?? '') || /kitchen/i.test(room.name ?? '');
 
 /** The model groups a scanned storage object may become, most likely first. */
 export function candidateGroups(measured: Pick<Measured, 'height' | 'elevation'>, kitchen: boolean): ModelGroupId[] {

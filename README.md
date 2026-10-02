@@ -58,11 +58,10 @@ item of the same kind. The build copies the files into `public/models/mozu/`.
   press **Doors** in the bottom bar, the doors button in its menu, or **O**: they swing 95° out (drawers slide
   out 60 % of their depth). It is saved with the design (`open` on the item) and undoable; pictures always
   show the cabinet closed. Wardrobes and KF04 have no separate doors, so the button is greyed out for them.
-- **What a scan shows:** only storage becomes an item (a wardrobe, cupboard or shelf RoomPlan found), and it
-  becomes the closest MOZU model in size: wall-hung things become wall cabinets, low things base or side
-  cabinets, tall things wardrobes (kitchen tall units only in a kitchen). Beds, sofas, tables, chairs,
-  televisions and appliances are in the scan but aren't shown. A design saved before this catalogue opens with
-  its old cabinets as the nearest MOZU models; nothing is written back until you edit.
+- **What a scan shows:** only the room — walls, doors, windows and sockets. None of the objects RoomPlan detected
+  (furniture, cupboards, appliances) is placed; they stay in the scan file but a new room starts empty, ready for
+  MOZU's range. A design saved before the MOZU catalogue opens with its old cabinets as the nearest MOZU models
+  (`lib/migrate.ts`, using the size matching in `lib/scanMatch.ts`); nothing is written back until you edit.
 
 **Saving:** a code is only the way a scan gets from the phone to the laptop: it carries the scan, for 24 hours, and
 anyone who has it can load the scan. Signed in, the scan becomes a **project** in your account (**My projects** at
@@ -208,8 +207,8 @@ plug in and press ⌘R again to refresh it.
 2. On the floorplan screen, tap **Send to MOZU web**. A 6-character code appears, e.g. `B7K4M2`.
 3. On any computer, open the production address, type the code into **Code from the phone** (upper or lower case,
    dashes and spaces are fine) and click **Load**. Or open the address the phone shows (`…/scan/B7K4M2`).
-4. The room appears in 3D with its doors, windows, sockets and any wardrobes or cupboards the scan found (as the
-   nearest MOZU models). Add cabinets and wardrobes from the library on the left.
+4. The room appears in 3D with its doors, windows and sockets, and empty: furniture and cupboards the scan found
+   aren't placed. Add cabinets and wardrobes from the library on the left.
 
 Codes last 24 hours. If a code has expired, tap **Send to MOZU web** again; you don't need to rescan.
 

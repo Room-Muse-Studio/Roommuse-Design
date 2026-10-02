@@ -1,14 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { candidateGroups, isKitchen, matchStorage, nearestModel, sizeScore } from '../lib/scanMatch';
+import { candidateGroups, matchStorage, nearestModel, sizeScore } from '../lib/scanMatch';
 import { modelById, modelsIn } from '../lib/models';
-
-test('a kitchen is told by the room type, or failing that its name', () => {
-  assert.ok(isKitchen({ type: 'kitchen' }));
-  assert.ok(isKitchen({ name: 'Kitchen / diner' }));
-  assert.ok(!isKitchen({ type: 'bedroom', name: 'Bedroom A' }));
-  assert.ok(!isKitchen({}));
-});
 
 test('where a thing stands decides which groups it may become', () => {
   assert.deepEqual(candidateGroups({ height: 300, elevation: 1500 }, false), ['kitchen-wall'], 'hung on the wall');
